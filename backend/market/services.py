@@ -1,0 +1,28 @@
+import requests
+from django.conf import settings
+
+
+class AlphaVantageClient:
+    BASE_URL = "https://www.alphavantage.co/query"
+
+    def __init__(self):
+        self.api_key = settings.ALPHA_VANTAGE_API_KEY
+
+    def _get(self, **params):
+        params["apikey"] = self.api_key
+        response = requests.get(self.BASE_URL, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def search(self, keywords: str) -> dict:
+        return self._get(function="SYMBOL_SEARCH", keywords=keywords)
+
+    def global_quote(self, symbol: str) -> dict:
+        return self._get(function="GLOBAL_QUOTE", symbol=symbol)
+
+    def time_series_daily(self, symbol: str, outputsize: str = "compact") -> dict:
+        return self._get(
+            function="TIME_SERIES_DAILY",
+            symbol=symbol,
+            outputsize=outputsize,
+        )
