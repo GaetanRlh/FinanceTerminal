@@ -2,7 +2,10 @@ import { useForm } from 'react-hook-form'
 import { Box, Button, TextField, Typography, Stack, Alert, Link } from '@mui/material'
 import { useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
-import { Link as RouterLink } from 'react-router-dom'
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom'
+import axios from 'axios'
+import { login as loginApi } from '../services/api'
+import { useAuth } from '../contexts/AuthContext'
 
 type LoginFormValues = {
   email: string
@@ -11,11 +14,40 @@ type LoginFormValues = {
 
 export function LoginPage() {
   const { register, handleSubmit } = useForm<LoginFormValues>()
-  const [submitted, setSubmitted] = useState(false)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { login } = useAuth()
+  const [error, setError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const from = (location.state as { from?: { pathname?: string } } | null)?.from
 
-  const onSubmit = (data: LoginFormValues) => {
-    console.log('Login form submitted:', data)
-    setSubmitted(true)
+  const onSubmit = async (data: LoginFormValues) => {
+    setError(null)
+    setIsSubmitting(true)
+    try {
+      const tokens = await loginApi(data)
+      login(tokens)
+      if (from?.pathname) {
+        navigate(from.pathname, { replace: true })
+      } else {
+        navigate('/', { replace: true })
+      }
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response) {
+        const status = err.response.status
+        if (status === 401) {
+          setError('Identifiants incorrects. Vérifiez votre e-mail et votre mot de passe.')
+        } else if (status === 403 || status === 429) {
+          setError('Compte temporairement bloqué suite à plusieurs tentatives. Réessayez plus tard.')
+        } else {
+          setError("Une erreur est survenue lors de la connexion. Veuillez réessayer.")
+        }
+      } else {
+        setError("Une erreur réseau est survenue. Veuillez vérifier votre connexion et réessayer.")
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -27,7 +59,10 @@ export function LoginPage() {
         sx={{ maxWidth: 400, mx: 'auto' }}
       >
         <Stack spacing={2}>
-          {submitted && <Alert severity="success">Connexion simulée avec succès (mock).</Alert>}
+          {from && !error && (
+            <Alert severity="info">Vous devez être connecté pour accéder à cette page.</Alert>
+          )}
+          {error && <Alert severity="error">{error}</Alert>}
           <TextField
             label="Adresse e-mail"
             type="email"
@@ -42,7 +77,7 @@ export function LoginPage() {
             required
             {...register('password')}
           />
-          <Button type="submit" variant="contained">
+          <Button type="submit" variant="contained" disabled={isSubmitting}>
             Se connecter
           </Button>
           <Typography variant="body2">

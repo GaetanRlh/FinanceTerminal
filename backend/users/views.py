@@ -1,6 +1,12 @@
+from datetime import timedelta
+
+from django.core.cache import cache
+from django.utils import timezone
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .serializers import RegisterSerializer, UserSerializer, PasswordResetSerializer
 
@@ -25,6 +31,68 @@ class RegisterView(generics.CreateAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    """
+    Login view with simple failure-based throttling.
+    Blocks an IP after a number of failed attempts for a period of time.
+    """
+
+    max_failures = 5
+    block_minutes = 15
+
+    def _get_client_ip(self, request):
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if x_forwarded_for:
+            # In case of multiple IPs, take the first one
+            return x_forwarded_for.split(",")[0].strip()
+        return request.META.get("REMOTE_ADDR", "") or "unknown"
+
+    def _get_cache_key(self, request):
+        ip = self._get_client_ip(request)
+        return f"login_fail:{ip}"
+
+    def post(self, request, *args, **kwargs):
+        cache_key = self._get_cache_key(request)
+        data = cache.get(cache_key) or {}
+
+        blocked_until = data.get("blocked_until")
+        now = timezone.now()
+        if blocked_until and blocked_until > now:
+            # Still blocked
+            return Response(
+                {"detail": "Trop de tentatives de connexion. Réessayez plus tard."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        try:
+            response = super().post(request, *args, **kwargs)
+        except AuthenticationFailed as exc:
+            failures = int(data.get("count", 0)) + 1
+            # Base TTL for the cache entry
+            ttl_seconds = self.block_minutes * 60
+
+            if failures >= self.max_failures:
+                blocked_until = now + timedelta(minutes=self.block_minutes)
+                cache.set(
+                    cache_key,
+                    {"count": failures, "blocked_until": blocked_until},
+                    ttl_seconds,
+                )
+                return Response(
+                    {"detail": "Trop de tentatives de connexion. Réessayez plus tard."},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            cache.set(cache_key, {"count": failures}, ttl_seconds)
+            # Re-raise so the client still gets the standard auth error for this attempt
+            raise exc
+
+        # Successful authentication: reset counter
+        if data:
+            cache.delete(cache_key)
+        return response
 
 
 class MeView(generics.RetrieveAPIView):

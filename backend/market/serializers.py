@@ -24,7 +24,14 @@ class WatchlistItemSerializer(serializers.ModelSerializer):
 
 
 class NoteSerializer(serializers.ModelSerializer):
+    entity = EntitySerializer(read_only=True)
+    entity_id = serializers.PrimaryKeyRelatedField(
+        queryset=Entity.objects.all(),
+        source="entity",
+        write_only=True,
+    )
+
     class Meta:
         model = Note
-        fields = ("id", "titre", "contenu", "created_at")
-        read_only_fields = ("id", "created_at")
+        fields = ("id", "entity", "entity_id", "titre", "contenu", "created_at")
+        read_only_fields = ("id", "created_at", "entity")

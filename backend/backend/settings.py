@@ -70,6 +70,15 @@ DATABASES = {
     }
 }
 
+# ── Cache ───────────────────────────────────────────────────────────
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "auth-cache",
+    }
+}
+
 # ── Auth ────────────────────────────────────────────────────────────
 
 AUTH_USER_MODEL = "users.CustomUser"

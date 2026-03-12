@@ -7,6 +7,11 @@ class AlphaVantageClient:
 
     def __init__(self):
         self.api_key = settings.ALPHA_VANTAGE_API_KEY
+        if not self.api_key:
+            raise RuntimeError(
+                "ALPHA_VANTAGE_API_KEY is not configured. "
+                "Set it in your environment (see backend/.env.example)."
+            )
 
     def _get(self, **params):
         params["apikey"] = self.api_key

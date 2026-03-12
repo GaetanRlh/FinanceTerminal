@@ -33,6 +33,13 @@ class WatchlistItem(models.Model):
 
 class Note(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notes")
+    entity = models.ForeignKey(
+        Entity,
+        on_delete=models.CASCADE,
+        related_name="notes",
+        null=True,
+        blank=True,
+    )
     titre = models.CharField(max_length=255)
     contenu = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
