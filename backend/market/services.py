@@ -2,6 +2,17 @@ import requests
 from django.conf import settings
 
 
+def check_av_error(data: dict) -> str | None:
+    """Check Alpha Vantage response for error fields. Returns error message or None."""
+    if "Error Message" in data:
+        return data["Error Message"]
+    if "Note" in data:
+        return data["Note"]
+    if "Information" in data:
+        return data["Information"]
+    return None
+
+
 class AlphaVantageClient:
     BASE_URL = "https://www.alphavantage.co/query"
 
