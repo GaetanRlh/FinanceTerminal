@@ -10,7 +10,7 @@ from .services import AlphaVantageClient
 # ── Alpha Vantage proxy views ──────────────────────────────────────
 
 class SymbolSearchView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         query = request.query_params.get("q", "").strip()
@@ -22,7 +22,7 @@ class SymbolSearchView(APIView):
 
 
 class QuoteView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         symbol = request.query_params.get("symbol", "").strip()
@@ -34,7 +34,7 @@ class QuoteView(APIView):
 
 
 class TimeSeriesView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         symbol = request.query_params.get("symbol", "").strip()
