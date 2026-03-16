@@ -18,7 +18,10 @@ type LoginResponse = {
 }
 
 export async function login(payload: { email: string; password: string }): Promise<LoginResponse> {
-  const response = await api.post('/auth/login/', payload)
+  const response = await api.post('/auth/login/', {
+    email: payload.email,
+    password: payload.password,
+  })
   return response.data as LoginResponse
 }
 
@@ -86,6 +89,88 @@ export async function getTimeSeries(symbol: string): Promise<TimeSeriesPoint[]> 
     }))
     .filter((point) => Number.isFinite(point.close))
     .sort((a, b) => (a.date < b.date ? -1 : 1))
+}
+
+// ── Entities, Watchlist, Notes ───────────────────────────────────────────
+
+export type Entity = {
+  id: number
+  nom: string
+  secteur: string
+  ticker: string
+  valeur_totale: string | number
+}
+
+export type WatchlistItem = {
+  id: number
+  entity: Entity
+  added_at: string
+}
+
+export type NoteItem = {
+  id: number
+  entity: Entity | null
+  entity_id?: number
+  titre: string
+  contenu: string
+  created_at: string
+}
+
+export async function getEntities(params?: { ticker?: string }): Promise<Entity[]> {
+  const response = await api.get('/market/entities/', { params })
+  return response.data as Entity[]
+}
+
+export async function createEntity(data: {
+  nom: string
+  secteur?: string
+  ticker: string
+  valeur_totale?: number
+}): Promise<Entity> {
+  const response = await api.post('/market/entities/', {
+    nom: data.nom,
+    secteur: data.secteur ?? '',
+    ticker: data.ticker,
+    valeur_totale: data.valeur_totale ?? 0,
+  })
+  return response.data as Entity
+}
+
+export async function getWatchlist(): Promise<WatchlistItem[]> {
+  const response = await api.get('/market/watchlist/')
+  return response.data as WatchlistItem[]
+}
+
+export async function addToWatchlist(entityId: number): Promise<WatchlistItem> {
+  const response = await api.post('/market/watchlist/', { entity_id: entityId })
+  return response.data as WatchlistItem
+}
+
+export async function removeFromWatchlist(watchlistItemId: number): Promise<void> {
+  await api.delete(`/market/watchlist/${watchlistItemId}/`)
+}
+
+export async function getNotes(): Promise<NoteItem[]> {
+  const response = await api.get('/market/notes/')
+  return response.data as NoteItem[]
+}
+
+export async function createNote(data: {
+  entity_id: number
+  titre: string
+  contenu: string
+}): Promise<NoteItem> {
+  const response = await api.post('/market/notes/', data)
+  return response.data as NoteItem
+}
+
+export async function updateNote(id: number, data: { titre?: string; contenu?: string }): Promise<NoteItem> {
+  const response = await api.patch(`/market/notes/${id}/`, data)
+  return response.data as NoteItem
+}
+
+export async function deleteNote(id: number): Promise<void> {
+  await api.delete(`/market/notes/${id}/`)
 }
 
 export { api }

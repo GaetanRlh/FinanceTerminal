@@ -1,56 +1,54 @@
 import {
   Alert,
+  Avatar,
   Box,
+  Button,
   Card,
   CardContent,
+  Chip,
   CircularProgress,
-  Divider,
   IconButton,
+  Paper,
   Stack,
+  Tab,
+  Tabs,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
-  Button,
-  Paper,
-  List,
-  ListItem,
-  ListItemText,
   Tooltip,
 } from '@mui/material'
+import StarIcon from '@mui/icons-material/Star'
+import StarBorderIcon from '@mui/icons-material/StarBorder'
+import EditIcon from '@mui/icons-material/Edit'
+import DeleteIcon from '@mui/icons-material/Delete'
+import AddIcon from '@mui/icons-material/Add'
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import axios from 'axios'
-import { PageHeader } from '../components/PageHeader'
-import { TradingViewChart } from '../components/TradingViewChart'
-import { getQuote, getTimeSeries, type Quote, type TimeSeriesPoint, api } from '../services/api'
+import { useParams, Link as RouterLink } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
+  getQuote,
+  getTimeSeries,
+  getEntities,
+  createEntity,
+  getWatchlist,
+  addToWatchlist,
+  removeFromWatchlist,
+  getNotes,
+  createNote,
+  updateNote,
+  deleteNote,
+  type Quote,
+  type TimeSeriesPoint,
+  type NoteItem,
+} from '../services/api'
+import { PortfolioLineChart } from '../components/charts/PortfolioLineChart'
+import { HoldingsPieChart } from '../components/charts/HoldingsPieChart'
 
-type WatchlistItem = {
-  id: number
-  entity: {
-    id: number
-    nom: string
-    ticker: string
-  }
-}
-
-type NoteItem = {
-  id: number
-  titre: string
-  contenu: string
-  created_at: string
-  entity: {
-    id: number
-  } | null
-}
+type TabValue = 'portfolio' | 'transactions' | 'notes'
 
 export function EntityDetailPage() {
   const { symbol = '' } = useParams<{ symbol: string }>()
@@ -65,260 +63,468 @@ export function EntityDetailPage() {
   const [entityId, setEntityId] = useState<number | null>(null)
   const [isInWatchlist, setIsInWatchlist] = useState(false)
   const [watchlistItemId, setWatchlistItemId] = useState<number | null>(null)
+  const [watchlistLoading, setWatchlistLoading] = useState(false)
 
   const [notes, setNotes] = useState<NoteItem[]>([])
-  const [newNote, setNewNote] = useState('')
+  const [newNoteTitle, setNewNoteTitle] = useState('')
+  const [newNoteContent, setNewNoteContent] = useState('')
   const [notesError, setNotesError] = useState<string | null>(null)
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
+  const [editingContent, setEditingContent] = useState('')
+
+  const [activeTab, setActiveTab] = useState<TabValue>('portfolio')
 
   useEffect(() => {
-    const loadData = async () => {
+    let cancelled = false
+    const load = async () => {
       setIsLoading(true)
       setError(null)
       try {
         const [q, s] = await Promise.all([getQuote(decodedSymbol), getTimeSeries(decodedSymbol)])
-        setQuote(q)
-        setSeries(s)
-      } catch {
-        setError("Impossible de charger les données de marché pour cette entité.")
+        if (!cancelled) {
+          setQuote(q)
+          setSeries(s)
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          const status = (err as { response?: { status?: number } })?.response?.status
+          setError(
+            status === 401
+              ? 'Connectez-vous pour afficher les données de cette entité.'
+              : 'Impossible de charger les données de marché.'
+          )
+        }
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
-
-    loadData()
+    load()
+    return () => { cancelled = true }
   }, [decodedSymbol])
 
   useEffect(() => {
-    const ensureEntityAndFetchExtras = async () => {
-      if (!isAuthenticated || !quote) return
+    if (!isAuthenticated || !quote) return
 
+    let cancelled = false
+    const ensureAndFetch = async () => {
       try {
-        const entitiesResponse = await api.get('/market/entities/', {
-          params: { ticker: quote.symbol },
-        })
-        const existing = (entitiesResponse.data as any[]).find(
-          (e) => e.ticker === quote.symbol,
-        )
+        const entities = await getEntities()
+        const existing = entities.find((e) => e.ticker === quote.symbol)
+        let id = existing?.id
 
-        let id = existing?.id as number | undefined
         if (!id) {
-          const createdResponse = await api.post('/market/entities/', {
+          const created = await createEntity({
             nom: quote.symbol,
-            secteur: '',
             ticker: quote.symbol,
+            secteur: '',
             valeur_totale: 0,
           })
-          id = createdResponse.data.id
+          id = created.id
         }
 
-        setEntityId(id ?? null)
+        if (cancelled) return
+        setEntityId(id)
 
-        const [watchlistResponse, notesResponse] = await Promise.all([
-          api.get('/market/watchlist/'),
-          api.get('/market/notes/'),
-        ])
+        const [watchlistRes, notesRes] = await Promise.all([getWatchlist(), getNotes()])
+        if (cancelled) return
 
-        const watchlistItems = watchlistResponse.data as WatchlistItem[]
-        const foundItem = watchlistItems.find((item) => item.entity.id === id)
-        if (foundItem) {
-          setIsInWatchlist(true)
-          setWatchlistItemId(foundItem.id)
-        } else {
-          setIsInWatchlist(false)
-          setWatchlistItemId(null)
-        }
-
-        const allNotes = notesResponse.data as NoteItem[]
-        setNotes(allNotes.filter((n) => n.entity && n.entity.id === id))
+        const wl = watchlistRes.find((w) => w.entity.id === id)
+        setIsInWatchlist(!!wl)
+        setWatchlistItemId(wl?.id ?? null)
+        setNotes(notesRes.filter((n) => n.entity?.id === id))
       } catch {
-        // Fail silently for extras; core market data is primary
+        // Silently fail
       }
     }
-
-    ensureEntityAndFetchExtras()
+    ensureAndFetch()
+    return () => { cancelled = true }
   }, [isAuthenticated, quote])
 
   const handleToggleWatchlist = async () => {
     if (!isAuthenticated || !entityId) return
-
+    setWatchlistLoading(true)
     try {
       if (isInWatchlist && watchlistItemId != null) {
-        await api.delete(`/market/watchlist/${watchlistItemId}/`)
+        await removeFromWatchlist(watchlistItemId)
         setIsInWatchlist(false)
         setWatchlistItemId(null)
       } else {
-        const response = await api.post('/market/watchlist/', {
-          entity_id: entityId,
-        })
+        const added = await addToWatchlist(entityId)
         setIsInWatchlist(true)
-        setWatchlistItemId(response.data.id)
+        setWatchlistItemId(added.id)
       }
-    } catch {
-      // Swallow errors for now; could show a toast later
+    } finally {
+      setWatchlistLoading(false)
     }
   }
 
   const handleAddNote = async () => {
-    if (!isAuthenticated || !entityId || !newNote.trim()) return
+    if (!entityId || !newNoteContent.trim()) return
     setNotesError(null)
     try {
-      const response = await api.post('/market/notes/', {
+      const created = await createNote({
         entity_id: entityId,
-        titre: `Note sur ${decodedSymbol}`,
-        contenu: newNote.trim(),
+        titre: newNoteTitle.trim() || `Note sur ${decodedSymbol}`,
+        contenu: newNoteContent.trim(),
       })
-      setNotes((prev) => [response.data as NoteItem, ...prev])
-      setNewNote('')
+      setNotes((prev) => [created, ...prev])
+      setNewNoteTitle('')
+      setNewNoteContent('')
     } catch {
-      setNotesError("Impossible d'enregistrer la note. Veuillez réessayer.")
+      setNotesError("Impossible d'enregistrer la note.")
     }
   }
 
-  const title = quote?.symbol ?? decodedSymbol
+  const handleStartEdit = (note: NoteItem) => {
+    setEditingNoteId(note.id)
+    setEditingContent(note.contenu)
+  }
+
+  const handleSaveEdit = async () => {
+    if (editingNoteId == null) return
+    try {
+      const updated = await updateNote(editingNoteId, { contenu: editingContent })
+      setNotes((prev) => prev.map((n) => (n.id === editingNoteId ? updated : n)))
+      setEditingNoteId(null)
+    } catch {
+      // Could show toast
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditingNoteId(null)
+    setEditingContent('')
+  }
+
+  const handleDeleteNote = async (id: number) => {
+    try {
+      await deleteNote(id)
+      setNotes((prev) => prev.filter((n) => n.id !== id))
+    } catch {
+      // Could show toast
+    }
+  }
+
+  const chartData = series.map((p) => ({ date: p.date, value: p.close }))
+  const pieData = quote?.price != null
+    ? [{ name: decodedSymbol, value: quote.price }]
+    : []
+
+  const totalValue = quote?.price ?? 0
+  const changePercent = quote?.changePercent ? parseFloat(quote.changePercent) : null
+
+  if (isLoading) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+        <CircularProgress />
+      </Box>
+    )
+  }
+
+  if (error) {
+    return (
+      <Alert
+        severity="error"
+        action={
+          !isAuthenticated && (
+            <Button color="inherit" component={RouterLink} to="/login">
+              Connexion
+            </Button>
+          )
+        }
+      >
+        {error}
+      </Alert>
+    )
+  }
 
   return (
-    <>
-      <PageHeader
-        title={title}
-        subtitle="Vue d’ensemble simplifiée de l’entité sélectionnée."
-      />
+    <Stack spacing={3}>
+      {/* Entity header */}
+      <Paper sx={{ p: 2 }}>
+        <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap">
+          <Avatar
+            sx={{
+              width: 56,
+              height: 56,
+              bgcolor: 'primary.main',
+              fontSize: '1.25rem',
+              fontWeight: 700,
+            }}
+          >
+            {decodedSymbol.slice(0, 2).toUpperCase()}
+          </Avatar>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="h5" fontWeight={700}>
+              {decodedSymbol}
+            </Typography>
+            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }} flexWrap="wrap">
+              <Chip label="Entité" size="small" variant="outlined" />
+              {quote?.price != null && (
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  {quote.price.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+                  {changePercent != null && (
+                    <Typography
+                      component="span"
+                      variant="body2"
+                      sx={{
+                        ml: 1,
+                        color: changePercent >= 0 ? 'success.main' : 'error.main',
+                      }}
+                    >
+                      {changePercent >= 0 ? '+' : ''}{changePercent.toFixed(2)}%
+                    </Typography>
+                  )}
+                </Typography>
+              )}
+            </Stack>
+          </Box>
+          {isAuthenticated ? (
+            <Button
+              variant="outlined"
+              size="medium"
+              startIcon={
+                watchlistLoading ? (
+                  <CircularProgress size={18} />
+                ) : isInWatchlist ? (
+                  <StarIcon />
+                ) : (
+                  <StarBorderIcon />
+                )
+              }
+              onClick={handleToggleWatchlist}
+              disabled={watchlistLoading}
+              sx={{ textTransform: 'none' }}
+            >
+              {isInWatchlist ? 'Dans la watchlist' : 'Ajouter à la watchlist'}
+            </Button>
+          ) : (
+            <Tooltip title="Connectez-vous pour ajouter à votre watchlist">
+              <span>
+                <Button
+                  variant="outlined"
+                  size="medium"
+                  startIcon={<StarBorderIcon />}
+                  disabled
+                  component={RouterLink}
+                  to="/login"
+                  sx={{ textTransform: 'none' }}
+                >
+                  Watchlist
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+        </Stack>
+      </Paper>
 
-      {isLoading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-          <CircularProgress />
-        </Box>
-      )}
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {!isLoading && !error && (
-        <Stack spacing={3}>
+      {/* Upper region: cards, pie, chart */}
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, gap: 2 }}>
+        <Box>
           <Card>
             <CardContent>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
-                <Box>
-                  <Typography variant="h5" component="h2">
-                    {title}
-                  </Typography>
-                  <Typography variant="subtitle1" color="text.secondary">
-                    Symbole : {quote?.symbol ?? decodedSymbol}
-                  </Typography>
-                  {quote?.price != null && (
-                    <Typography variant="h6" sx={{ mt: 1 }}>
-                      Prix actuel : {quote.price.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
-                    </Typography>
-                  )}
-                  {quote?.changePercent && (
-                    <Typography variant="body2" color="text.secondary">
-                      Variation : {quote.changePercent}
-                    </Typography>
-                  )}
-                </Box>
-                <Box>
-                  {isAuthenticated ? (
-                    <Tooltip
-                      title={
-                        isInWatchlist
-                          ? 'Retirer de ma watchlist'
-                          : 'Ajouter à ma watchlist'
-                      }
-                    >
-                      <IconButton onClick={handleToggleWatchlist} size="large" color="primary">
-                        <Typography component="span" sx={{ fontSize: 24 }}>
-                          {isInWatchlist ? '★' : '☆'}
-                        </Typography>
-                      </IconButton>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip title="Connectez-vous pour ajouter cette entité à votre watchlist.">
-                      <span>
-                        <IconButton size="large" disabled>
-                          <Typography component="span" sx={{ fontSize: 24 }}>
-                            ☆
-                          </Typography>
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  )}
-                </Box>
-              </Stack>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1 }}>
+                Valeur totale
+              </Typography>
+              <Typography variant="h4" fontWeight={700} sx={{ mt: 0.5 }}>
+                {totalValue.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+              </Typography>
+              {changePercent != null && (
+                <Typography
+                  variant="body2"
+                  sx={{ color: changePercent >= 0 ? 'success.main' : 'error.main', mt: 0.5 }}
+                >
+                  {changePercent >= 0 ? '+' : ''}{changePercent.toFixed(2)}% sur la période
+                </Typography>
+              )}
             </CardContent>
           </Card>
-
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              Historique du prix
-            </Typography>
-            {series.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                Aucune donnée de série temporelle disponible pour ce symbole.
-              </Typography>
-            ) : (
-              <Box sx={{ height: 400 }}>
-                <TradingViewChart symbol={decodedSymbol} />
-              </Box>
-            )}
+        </Box>
+        <Box>
+          <Paper sx={{ p: 2, height: '100%', minHeight: 280 }}>
+            <HoldingsPieChart data={pieData} height={240} />
           </Paper>
+        </Box>
+        <Box>
+          <Paper sx={{ p: 2, height: '100%', minHeight: 280 }}>
+            <PortfolioLineChart data={chartData} height={240} />
+          </Paper>
+        </Box>
+      </Box>
 
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              Notes
-            </Typography>
-            {!isAuthenticated && (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                Connectez-vous pour écrire des notes sur cette entité.
-              </Alert>
-            )}
-            {isAuthenticated && (
-              <Stack spacing={2} sx={{ mb: 2 }}>
-                {notesError && <Alert severity="error">{notesError}</Alert>}
-                <TextField
-                  label="Ajouter une note"
-                  placeholder="Saisissez ici une réflexion ou un commentaire sur cette entité..."
-                  multiline
-                  minRows={3}
-                  value={newNote}
-                  onChange={(event) => setNewNote(event.target.value)}
-                />
-                <Box>
-                  <Button variant="contained" onClick={handleAddNote} disabled={!newNote.trim()}>
-                    Enregistrer la note
-                  </Button>
-                </Box>
-              </Stack>
-            )}
-            <Divider sx={{ mb: 2 }} />
-            {notes.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                Aucune note enregistrée pour cette entité pour le moment.
+      {/* Lower region: tabs */}
+      <Paper sx={{ overflow: 'hidden' }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}
+        >
+          <Tab label="Portfolio" value="portfolio" />
+          <Tab label="Transactions" value="transactions" />
+          <Tab label="Notes" value="notes" />
+        </Tabs>
+
+        <Box sx={{ p: 2 }}>
+          {activeTab === 'portfolio' && (
+            <Table size="medium">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Actif</TableCell>
+                  <TableCell align="right">Prix</TableCell>
+                  <TableCell align="right">Variation</TableCell>
+                  <TableCell align="right">Valeur</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {quote?.price != null ? (
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 500 }}>{decodedSymbol}</TableCell>
+                    <TableCell align="right">
+                      {quote.price.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+                    </TableCell>
+                    <TableCell align="right">
+                      <Typography
+                        component="span"
+                        sx={{ color: (changePercent ?? 0) >= 0 ? 'success.main' : 'error.main' }}
+                      >
+                        {changePercent != null ? `${changePercent >= 0 ? '+' : ''}${changePercent}%` : '—'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="right">
+                      {quote.price.toLocaleString('fr-FR', { style: 'currency', currency: 'USD' })}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={4} sx={{ py: 4, color: 'text.secondary' }}>
+                      Aucune donnée de portefeuille disponible.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+
+          {activeTab === 'transactions' && (
+            <Box sx={{ py: 4, textAlign: 'center' }}>
+              <Typography color="text.secondary">
+                Aucune transaction disponible pour cette entité.
               </Typography>
-            ) : (
-              <List>
-                {notes.map((note) => (
-                  <ListItem key={note.id} alignItems="flex-start" divider>
-                    <ListItemText
-                      primary={note.titre}
-                      secondary={
-                        <>
-                          <Typography variant="body2" color="text.secondary">
-                            {new Date(note.created_at).toLocaleString('fr-FR')}
-                          </Typography>
-                          <Typography variant="body1">{note.contenu}</Typography>
-                        </>
-                      }
+            </Box>
+          )}
+
+          {activeTab === 'notes' && (
+            <Stack spacing={2}>
+              {!isAuthenticated && (
+                <Alert
+                  severity="info"
+                  action={
+                    <Button color="inherit" component={RouterLink} to="/login" size="small">
+                      Connexion
+                    </Button>
+                  }
+                >
+                  Connectez-vous pour écrire des notes privées sur cette entité.
+                </Alert>
+              )}
+
+              {isAuthenticated && (
+                <>
+                  {notesError && <Alert severity="error">{notesError}</Alert>}
+                  <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                      Ajouter une note
+                    </Typography>
+                    <TextField
+                      placeholder="Titre (optionnel)"
+                      size="small"
+                      fullWidth
+                      value={newNoteTitle}
+                      onChange={(e) => setNewNoteTitle(e.target.value)}
+                      sx={{ mb: 1 }}
                     />
-                  </ListItem>
-                ))}
-              </List>
-            )}
-          </Paper>
-        </Stack>
-      )}
-    </>
+                    <TextField
+                      placeholder="Saisissez votre réflexion ou commentaire..."
+                      multiline
+                      minRows={3}
+                      fullWidth
+                      value={newNoteContent}
+                      onChange={(e) => setNewNoteContent(e.target.value)}
+                    />
+                    <Button
+                      variant="contained"
+                      startIcon={<AddIcon />}
+                      onClick={handleAddNote}
+                      disabled={!newNoteContent.trim()}
+                      sx={{ mt: 2 }}
+                    >
+                      Enregistrer
+                    </Button>
+                  </Paper>
+
+                  {notes.length === 0 ? (
+                    <Typography color="text.secondary" sx={{ py: 2 }}>
+                      Aucune note enregistrée pour cette entité.
+                    </Typography>
+                  ) : (
+                    <Stack spacing={2}>
+                      {notes.map((note) => (
+                        <Paper key={note.id} variant="outlined" sx={{ p: 2 }}>
+                          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="subtitle1" fontWeight={600}>
+                                {note.titre}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {new Date(note.created_at).toLocaleString('fr-FR')}
+                              </Typography>
+                            </Box>
+                            <Stack direction="row" spacing={0.5}>
+                              {editingNoteId === note.id ? (
+                                <>
+                                  <Button size="small" onClick={handleSaveEdit}>
+                                    Enregistrer
+                                  </Button>
+                                  <Button size="small" color="inherit" onClick={handleCancelEdit}>
+                                    Annuler
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <IconButton size="small" onClick={() => handleStartEdit(note)}>
+                                    <EditIcon fontSize="small" />
+                                  </IconButton>
+                                  <IconButton size="small" onClick={() => handleDeleteNote(note.id)} color="error">
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </>
+                              )}
+                            </Stack>
+                          </Stack>
+                          {editingNoteId === note.id ? (
+                            <TextField
+                              multiline
+                              fullWidth
+                              minRows={3}
+                              value={editingContent}
+                              onChange={(e) => setEditingContent(e.target.value)}
+                              sx={{ mt: 2 }}
+                            />
+                          ) : (
+                            <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
+                              {note.contenu}
+                            </Typography>
+                          )}
+                        </Paper>
+                      ))}
+                    </Stack>
+                  )}
+                </>
+              )}
+            </Stack>
+          )}
+        </Box>
+      </Paper>
+    </Stack>
   )
 }
-
