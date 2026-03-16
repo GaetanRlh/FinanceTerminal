@@ -69,9 +69,13 @@ export function EntitiesPage() {
         if (!cancelled) setResults(data)
       } catch (err: unknown) {
         if (!cancelled) {
-          const status = (err as { response?: { status?: number } })?.response?.status
+          const ax = err as { response?: { status?: number; data?: { error?: string } } }
+          const status = ax?.response?.status
+          const msg = ax?.response?.data?.error
           if (status === 401) {
             setError('Connectez-vous pour rechercher des entités.')
+          } else if (status === 503 && msg) {
+            setError(msg)
           } else {
             setError('Impossible de récupérer les résultats. Vérifiez votre connexion ou réessayez.')
           }

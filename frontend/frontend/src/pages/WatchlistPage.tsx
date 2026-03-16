@@ -25,9 +25,11 @@ export function WatchlistPage() {
   const [removingId, setRemovingId] = useState<number | null>(null)
   const navigate = useNavigate()
 
+  const REFRESH_INTERVAL_MS = 60_000
+
   useEffect(() => {
     let cancelled = false
-    const fetch = async () => {
+    const fetchData = async () => {
       setIsLoading(true)
       setError(null)
       try {
@@ -39,8 +41,20 @@ export function WatchlistPage() {
         if (!cancelled) setIsLoading(false)
       }
     }
-    fetch()
+    fetchData()
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const data = await getWatchlist()
+        setItems(data)
+      } catch {
+        // Silent fail on refresh
+      }
+    }, REFRESH_INTERVAL_MS)
+    return () => clearInterval(interval)
   }, [])
 
   const handleRemove = async (item: WatchlistItem, e: React.MouseEvent) => {

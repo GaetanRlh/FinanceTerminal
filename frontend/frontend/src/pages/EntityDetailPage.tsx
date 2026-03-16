@@ -74,6 +74,8 @@ export function EntityDetailPage() {
 
   const [activeTab, setActiveTab] = useState<TabValue>('portfolio')
 
+  const REFRESH_INTERVAL_MS = 60_000
+
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -88,10 +90,12 @@ export function EntityDetailPage() {
       } catch (err: unknown) {
         if (!cancelled) {
           const status = (err as { response?: { status?: number } })?.response?.status
+          const data = (err as { response?: { data?: { error?: string } } })?.response?.data
+          const msg = data?.error
           setError(
             status === 401
               ? 'Connectez-vous pour afficher les données de cette entité.'
-              : 'Impossible de charger les données de marché.'
+              : msg ?? 'Impossible de charger les données de marché.'
           )
         }
       } finally {
@@ -101,6 +105,20 @@ export function EntityDetailPage() {
     load()
     return () => { cancelled = true }
   }, [decodedSymbol])
+
+  useEffect(() => {
+    if (!decodedSymbol || error) return
+    const interval = setInterval(async () => {
+      try {
+        const [q, s] = await Promise.all([getQuote(decodedSymbol), getTimeSeries(decodedSymbol)])
+        setQuote(q)
+        setSeries(s)
+      } catch {
+        // Silent fail on refresh
+      }
+    }, REFRESH_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [decodedSymbol, error])
 
   useEffect(() => {
     if (!isAuthenticated || !quote) return
