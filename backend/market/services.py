@@ -259,7 +259,7 @@ class YFinanceClient:
                 "BookValue": g("bookValue"),
                 "EnterpriseValue": g("enterpriseValue"),
                 "EnterpriseToRevenue": g("enterpriseToRevenue"),
-                "EnterpriseToEbitda": g("enterpriseToEbitda"),
+                "EVToEBITDA": g("enterpriseToEbitda"),
                 "QuarterlyEarningsGrowthYOY": g("earningsQuarterlyGrowth"),
                 "QuarterlyRevenueGrowthYOY": g("revenueGrowth"),
             }
@@ -371,31 +371,56 @@ class YFinanceClient:
             )
             close = data["Close"]
             if close.shape[0] < 2:
-                return {"top_gainers": [], "top_losers": []}
+                return {"top_gainers": [], "top_losers": [], "most_actively_traded": []}
 
             prev = close.iloc[-2]
             curr = close.iloc[-1]
             pct = ((curr - prev) / prev * 100).dropna()
 
+            try:
+                vol_row = data["Volume"].iloc[-1]
+            except (KeyError, IndexError):
+                vol_row = None
+
             def fmt(sym: str, p: float) -> dict:
                 price = _safe_float(curr[sym], 2)
+                vol = None
+                if vol_row is not None:
+                    try:
+                        raw = vol_row[sym]
+                        vol = int(raw) if raw == raw else None  # NaN != NaN
+                    except (KeyError, TypeError, ValueError, OverflowError):
+                        vol = None
                 return {
                     "ticker": sym,
                     "price": str(price) if price else "",
-                    "change_amount": str(round(curr[sym] - prev[sym], 4)),
+                    "change_amount": str(round(float(curr[sym]) - float(prev[sym]), 4)),
                     "change_percentage": f"{p:.4f}%",
+                    "volume": str(vol) if vol is not None else "",
                 }
 
             sorted_pct = pct.sort_values(ascending=False)
             gainers = [fmt(s, p) for s, p in sorted_pct.head(10).items()]
             losers = [fmt(s, p) for s, p in sorted_pct.tail(10).iloc[::-1].items()]
 
-            result = {"top_gainers": gainers, "top_losers": losers}
+            actively_traded: list = []
+            if vol_row is not None:
+                try:
+                    vol_sorted = vol_row.dropna().sort_values(ascending=False)
+                    actively_traded = [
+                        fmt(s, float(pct[s]) if s in pct.index else 0.0)
+                        for s in vol_sorted.head(10).index
+                        if s in curr.index
+                    ]
+                except Exception:
+                    actively_traded = []
+
+            result = {"top_gainers": gainers, "top_losers": losers, "most_actively_traded": actively_traded}
             cache.set(key, result, self.TTL_TOP_MOVERS)
             return result
 
         except Exception as exc:
-            return {"top_gainers": [], "top_losers": [], "error": str(exc)}
+            return {"top_gainers": [], "top_losers": [], "most_actively_traded": [], "error": str(exc)}
 
     # ── Market status (no network call) ──────────────────────────────────
 

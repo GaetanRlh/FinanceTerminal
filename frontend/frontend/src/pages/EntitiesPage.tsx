@@ -12,10 +12,15 @@ import {
   IconButton,
   Tooltip,
   InputAdornment,
+  Typography,
+  Chip,
+  Stack,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import StarIcon from '@mui/icons-material/Star'
 import StarBorderIcon from '@mui/icons-material/StarBorder'
+import TrendingUpIcon from '@mui/icons-material/TrendingUp'
+import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
@@ -30,6 +35,8 @@ import {
   type SearchResult,
   type WatchlistItem,
 } from '../services/api'
+
+const POPULAR = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'SPY', 'BRK.A', 'V']
 
 export function EntitiesPage() {
   const [searchParams] = useSearchParams()
@@ -46,13 +53,11 @@ export function EntitiesPage() {
 
   const debouncedQuery = useDebouncedValue(query, 400)
 
-  // Sync URL query to local state
   useEffect(() => {
     const q = searchParams.get('q') ?? ''
     if (q !== query) setQuery(q)
   }, [searchParams])
 
-  // Fetch search results (Alpha Vantage) when authenticated
   useEffect(() => {
     if (debouncedQuery.trim().length < 2) {
       setResults([])
@@ -73,11 +78,11 @@ export function EntitiesPage() {
           const status = ax?.response?.status
           const msg = ax?.response?.data?.error
           if (status === 401) {
-            setError('Connectez-vous pour rechercher des entités.')
+            setError('Sign in to search entities.')
           } else if (status === 503 && msg) {
             setError(msg)
           } else {
-            setError('Impossible de récupérer les résultats. Vérifiez votre connexion ou réessayez.')
+            setError('Unable to fetch results. Check your connection or try again.')
           }
         }
       } finally {
@@ -89,7 +94,6 @@ export function EntitiesPage() {
     return () => { cancelled = true }
   }, [debouncedQuery])
 
-  // Fetch Django entities and watchlist when authenticated
   useEffect(() => {
     if (!isAuthenticated) {
       setDjangoEntities([])
@@ -98,29 +102,24 @@ export function EntitiesPage() {
     }
 
     let cancelled = false
-    const fetch = async () => {
+    const fetchAuth = async () => {
       try {
-        const [entitiesRes, watchlistRes] = await Promise.all([
-          getEntities(),
-          getWatchlist(),
-        ])
+        const [entitiesRes, watchlistRes] = await Promise.all([getEntities(), getWatchlist()])
         if (!cancelled) {
           setDjangoEntities(entitiesRes.map((e) => ({ id: e.id, ticker: e.ticker })))
           setWatchlist(watchlistRes)
         }
       } catch {
-        // Silently fail; watchlist toggle will still work via ensure-create
+        // silent
       }
     }
-    fetch()
+    fetchAuth()
     return () => { cancelled = true }
   }, [isAuthenticated])
 
   const watchlistByTicker = useMemo(() => {
     const map = new Map<string, WatchlistItem>()
-    for (const w of watchlist) {
-      map.set(w.entity.ticker, w)
-    }
+    for (const w of watchlist) map.set(w.entity.ticker, w)
     return map
   }, [watchlist])
 
@@ -128,22 +127,14 @@ export function EntitiesPage() {
     e.stopPropagation()
     if (!isAuthenticated) return
     setWatchlistToggling(result.symbol)
-
     try {
       const existing = djangoEntities.find((e) => e.ticker === result.symbol)
       let entityId = existing?.id
-
       if (!entityId) {
-        const created = await createEntity({
-          nom: result.name,
-          ticker: result.symbol,
-          secteur: '',
-          valeur_totale: 0,
-        })
+        const created = await createEntity({ nom: result.name, ticker: result.symbol, secteur: '', valeur_totale: 0 })
         entityId = created.id
         setDjangoEntities((prev) => [...prev, { id: created.id, ticker: created.ticker }])
       }
-
       const wl = watchlistByTicker.get(result.symbol)
       if (wl) {
         await removeFromWatchlist(wl.id)
@@ -153,7 +144,7 @@ export function EntitiesPage() {
         setWatchlist((prev) => [added, ...prev])
       }
     } catch {
-      // Could show toast
+      // silent
     } finally {
       setWatchlistToggling(null)
     }
@@ -164,61 +155,98 @@ export function EntitiesPage() {
   return (
     <>
       <PageHeader
-        title="Explorateur d'entités"
-        subtitle="Recherchez et explorez les entités financières. Ajoutez-les à votre watchlist pour les suivre."
+        title="Explorer"
+        subtitle="Search and browse financial entities from global markets"
+        breadcrumbs={[{ label: 'Market', to: '/' }, { label: 'Explorer' }]}
       />
-      <Box sx={{ mb: 3 }}>
+
+      {/* Search bar */}
+      <Box sx={{ mb: 2.5 }}>
         <TextField
-          label="Rechercher une entité"
-          placeholder="Nom, secteur ou ticker (min. 2 caractères)"
+          label="Search entity"
+          placeholder="Company name, sector, or ticker symbol (min 2 chars)"
           fullWidth
           variant="outlined"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          autoFocus
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <SearchIcon sx={{ color: 'text.secondary' }} />
+                <SearchIcon sx={{ color: 'rgba(0,212,255,0.4)', fontSize: 18 }} />
               </InputAdornment>
             ),
+            endAdornment: isLoading ? (
+              <InputAdornment position="end">
+                <CircularProgress size={16} sx={{ color: 'rgba(0,212,255,0.4)' }} />
+              </InputAdornment>
+            ) : null,
           }}
           sx={{
             '& .MuiOutlinedInput-root': {
-              bgcolor: 'background.paper',
+              fontSize: '0.9rem',
             },
           }}
         />
       </Box>
 
-      {!isAuthenticated && hasQuery && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Connectez-vous pour rechercher des entités et les ajouter à votre watchlist.
-        </Alert>
-      )}
-
-      {isLoading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress size={32} />
+      {/* Popular tickers shortcut */}
+      {!hasQuery && (
+        <Box sx={{ mb: 2.5 }}>
+          <Typography sx={{ fontSize: '0.62rem', letterSpacing: '0.1em', color: 'rgba(0,212,255,0.4)', fontFamily: '"JetBrains Mono", monospace', fontWeight: 700, mb: 1 }}>
+            POPULAR
+          </Typography>
+          <Stack direction="row" spacing={0.75} flexWrap="wrap" gap={0.75}>
+            {POPULAR.map((sym) => (
+              <Chip
+                key={sym}
+                label={sym}
+                size="small"
+                icon={<TrendingUpIcon sx={{ fontSize: '12px !important' }} />}
+                onClick={() => setQuery(sym)}
+                sx={{
+                  fontFamily: '"JetBrains Mono", monospace',
+                  fontSize: '0.7rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  bgcolor: 'rgba(0,212,255,0.05)',
+                  border: '1px solid rgba(0,212,255,0.2)',
+                  color: 'rgba(0,212,255,0.8)',
+                  '&:hover': {
+                    bgcolor: 'rgba(0,212,255,0.1)',
+                    borderColor: 'rgba(0,212,255,0.5)',
+                  },
+                }}
+              />
+            ))}
+          </Stack>
         </Box>
       )}
 
+      {!isAuthenticated && hasQuery && (
+        <Alert severity="info" sx={{ mb: 2, fontSize: '0.78rem' }}>
+          Sign in to search entities and manage your watchlist.
+        </Alert>
+      )}
+
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mb: 2, fontSize: '0.78rem' }}>
           {error}
         </Alert>
       )}
 
       <Paper sx={{ overflow: 'hidden' }}>
-        <Table size="medium">
+        <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Nom</TableCell>
-              <TableCell>Symbole</TableCell>
-              <TableCell>Région</TableCell>
-              <TableCell>Devise</TableCell>
+              <TableCell>Symbol</TableCell>
+              <TableCell>Name</TableCell>
+              <TableCell>Region</TableCell>
+              <TableCell>Currency</TableCell>
+              <TableCell align="right">Detail</TableCell>
               {isAuthenticated && (
                 <TableCell align="center" sx={{ width: 60 }}>
-                  Watchlist
+                  Watch
                 </TableCell>
               )}
             </TableRow>
@@ -226,15 +254,19 @@ export function EntitiesPage() {
           <TableBody>
             {!hasQuery && !isLoading && !error && (
               <TableRow>
-                <TableCell colSpan={isAuthenticated ? 5 : 4} sx={{ py: 4, color: 'text.secondary' }}>
-                  Tapez au moins 2 caractères pour lancer une recherche.
+                <TableCell colSpan={isAuthenticated ? 6 : 5} sx={{ py: 4 }}>
+                  <Typography sx={{ color: 'rgba(224,230,240,0.3)', fontFamily: '"JetBrains Mono", monospace', fontSize: '0.78rem', textAlign: 'center' }}>
+                    Type at least 2 characters to search entities
+                  </Typography>
                 </TableCell>
               </TableRow>
             )}
             {hasQuery && results.length === 0 && !isLoading && !error && (
               <TableRow>
-                <TableCell colSpan={isAuthenticated ? 5 : 4} sx={{ py: 4, color: 'text.secondary' }}>
-                  Aucun résultat trouvé.
+                <TableCell colSpan={isAuthenticated ? 6 : 5} sx={{ py: 4 }}>
+                  <Typography sx={{ color: 'rgba(224,230,240,0.3)', fontFamily: '"JetBrains Mono", monospace', fontSize: '0.78rem', textAlign: 'center' }}>
+                    No results for "{query}"
+                  </Typography>
                 </TableCell>
               </TableRow>
             )}
@@ -245,31 +277,65 @@ export function EntitiesPage() {
                 <TableRow
                   key={`${result.symbol}-${result.region ?? ''}`}
                   hover
-                  sx={{
-                    cursor: 'pointer',
-                    '&:hover': { bgcolor: 'action.hover' },
-                  }}
+                  sx={{ cursor: 'pointer' }}
                   onClick={() => navigate(`/entities/${encodeURIComponent(result.symbol)}`)}
                 >
-                  <TableCell sx={{ fontWeight: 500 }}>{result.name}</TableCell>
-                  <TableCell sx={{ fontFamily: 'monospace' }}>{result.symbol}</TableCell>
-                  <TableCell>{result.region ?? '—'}</TableCell>
-                  <TableCell>{result.currency ?? '—'}</TableCell>
+                  <TableCell>
+                    <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontWeight: 700, color: '#00d4ff', fontSize: '0.82rem' }}>
+                      {result.symbol}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.8rem', color: '#e0e6f0' }}>
+                      {result.name}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.75rem', color: 'rgba(224,230,240,0.5)' }}>
+                      {result.region ?? '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={result.currency ?? '—'}
+                      size="small"
+                      sx={{
+                        height: 18,
+                        fontSize: '0.6rem',
+                        fontWeight: 700,
+                        bgcolor: 'rgba(245,158,11,0.1)',
+                        color: '#f59e0b',
+                        border: '1px solid rgba(245,158,11,0.25)',
+                        '& .MuiChip-label': { px: 0.75 },
+                      }}
+                    />
+                  </TableCell>
+                  <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                    <Tooltip title="Open detail page">
+                      <IconButton
+                        size="small"
+                        onClick={() => navigate(`/entities/${encodeURIComponent(result.symbol)}`)}
+                        sx={{ color: 'rgba(0,212,255,0.4)', '&:hover': { color: '#00d4ff' } }}
+                      >
+                        <OpenInNewIcon sx={{ fontSize: 15 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
                   {isAuthenticated && (
                     <TableCell align="center" onClick={(e) => e.stopPropagation()}>
-                      <Tooltip title={inWatchlist ? 'Retirer de la watchlist' : 'Ajouter à la watchlist'}>
+                      <Tooltip title={inWatchlist ? 'Remove from watchlist' : 'Add to watchlist'}>
                         <IconButton
                           size="small"
                           onClick={(e) => ensureEntityAndToggleWatchlist(result, e)}
                           disabled={toggling}
-                          sx={{ color: inWatchlist ? 'primary.main' : 'text.secondary' }}
+                          sx={{ color: inWatchlist ? '#f59e0b' : 'rgba(224,230,240,0.2)', '&:hover': { color: '#f59e0b' } }}
                         >
                           {toggling ? (
-                            <CircularProgress size={20} />
+                            <CircularProgress size={16} sx={{ color: 'rgba(0,212,255,0.4)' }} />
                           ) : inWatchlist ? (
-                            <StarIcon fontSize="small" />
+                            <StarIcon sx={{ fontSize: 16 }} />
                           ) : (
-                            <StarBorderIcon fontSize="small" />
+                            <StarBorderIcon sx={{ fontSize: 16 }} />
                           )}
                         </IconButton>
                       </Tooltip>
