@@ -36,15 +36,15 @@ class UserSerializer(serializers.ModelSerializer):
 class PasswordResetSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
+    _user = None
+
     def validate_email(self, value):
-        try:
-            self._user = User.objects.get(email=value)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("Aucun compte associé à cet e-mail.")
+        self._user = User.objects.filter(email=value).first()
         return value
 
     def save(self):
+        if not self._user:
+            return None
         token = default_token_generator.make_token(self._user)
-        # In production, send this via email. For dev, log to console.
         print(f"[PASSWORD RESET] user={self._user.email} token={token}")
         return token
