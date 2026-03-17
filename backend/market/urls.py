@@ -17,6 +17,10 @@ urlpatterns = [
     path("news/", views.NewsView.as_view(), name="market-news"),
     path("top-movers/", views.TopMoversView.as_view(), name="market-top-movers"),
     path("market-status/", views.MarketStatusView.as_view(), name="market-status"),
+    # Paper trading
+    path("paper/portfolio/", views.PaperPortfolioView.as_view(), name="paper-portfolio"),
+    path("paper/order/", views.PlaceOrderView.as_view(), name="paper-order"),
+    path("paper/trades/", views.PaperTradeListView.as_view(), name="paper-trades"),
     # CRUD
     path("", include(router.urls)),
 ]
