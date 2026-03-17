@@ -89,7 +89,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       ? {
           id: 'search',
           label: `Search "${query.trim()}"`,
-          description: 'Search entities via Alpha Vantage',
+          description: 'Search for a stock, ETF, or index',
           icon: <SearchIcon sx={{ fontSize: 16 }} />,
           action: () => go(`/entities?q=${encodeURIComponent(query.trim())}`),
           category: 'Search',

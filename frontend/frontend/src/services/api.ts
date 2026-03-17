@@ -51,8 +51,6 @@ api.interceptors.response.use(
   }
 )
 
-// ── Auth ─────────────────────────────────────────────────────────────
-
 type LoginResponse = {
   access: string
   refresh: string
@@ -84,8 +82,6 @@ export async function register(payload: {
 export async function requestPasswordReset(email: string): Promise<void> {
   await api.post('/auth/password-reset/', { email })
 }
-
-// ── Market / Alpha Vantage helpers ───────────────────────────────────
 
 export type SearchResult = {
   symbol: string
@@ -272,8 +268,6 @@ export async function getMarketStatus(): Promise<MarketStatusEntry[]> {
     return []
   }
 }
-
-// ── Entities, Watchlist, Notes ───────────────────────────────────────────
 
 export type Entity = {
   id: number

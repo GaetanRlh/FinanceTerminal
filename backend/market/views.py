@@ -4,10 +4,8 @@ from rest_framework.views import APIView
 
 from .models import Entity, WatchlistItem, Note
 from .serializers import EntitySerializer, WatchlistItemSerializer, NoteSerializer
-from .services import AlphaVantageClient, YFinanceClient, check_av_error
+from .services import SymbolSearch, YFinanceClient
 
-
-# ── Market data proxy views (yfinance) ─────────────────────────────
 
 class SymbolSearchView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -16,11 +14,7 @@ class SymbolSearchView(APIView):
         query = request.query_params.get("q", "").strip()
         if not query:
             return Response({"error": "Le paramètre 'q' est requis."}, status=status.HTTP_400_BAD_REQUEST)
-        client = AlphaVantageClient()
-        data = client.search(query)
-        err = check_av_error(data)
-        if err:
-            return Response({"error": err}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        data = SymbolSearch().search(query)
         return Response(data)
 
 
@@ -96,8 +90,6 @@ class MarketStatusView(APIView):
         return Response(data)
 
 
-# ── CRUD views ──────────────────────────────────────────────────────
-
 class EntityViewSet(viewsets.ModelViewSet):
     serializer_class = EntitySerializer
 
@@ -126,12 +118,9 @@ class WatchlistViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         entity = serializer.validated_data["entity"]
-        obj, created = WatchlistItem.objects.get_or_create(
-            user=request.user, entity=entity
-        )
-        serializer = WatchlistItemSerializer(obj)
+        obj, created = WatchlistItem.objects.get_or_create(user=request.user, entity=entity)
         return Response(
-            serializer.data,
+            WatchlistItemSerializer(obj).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -145,4 +134,3 @@ class NoteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
-

@@ -75,7 +75,6 @@ export function Layout({ children }: LayoutProps) {
   const [cmdOpen, setCmdOpen] = useState(false)
   const [tickerItems, setTickerItems] = useState<TickerItem[]>([])
 
-  // Load ticker data
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -103,7 +102,6 @@ export function Layout({ children }: LayoutProps) {
     return () => { cancelled = true }
   }, [])
 
-  // Global keyboard shortcut: Cmd+K or Ctrl+K
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault()
@@ -140,7 +138,6 @@ export function Layout({ children }: LayoutProps) {
         <Toolbar
           sx={{ gap: 1.5, py: 0.75, minHeight: '52px !important' }}
         >
-          {/* Logo */}
           <Typography
             variant="h6"
             component={RouterLink}
@@ -161,7 +158,6 @@ export function Layout({ children }: LayoutProps) {
             FT
           </Typography>
 
-          {/* Nav links */}
           <Stack direction="row" spacing={0} sx={{ display: { xs: 'none', md: 'flex' } }}>
             {[
               { to: '/', label: 'MARKET', icon: <DashboardIcon sx={{ fontSize: 14 }} /> },
@@ -202,7 +198,6 @@ export function Layout({ children }: LayoutProps) {
 
           <Box sx={{ flex: 1 }} />
 
-          {/* Search bar */}
           <Box component="form" onSubmit={handleSearch} sx={{ maxWidth: 260, width: '100%' }}>
             <TextField
               size="small"
@@ -228,7 +223,6 @@ export function Layout({ children }: LayoutProps) {
             />
           </Box>
 
-          {/* Cmd+K button */}
           <Tooltip title="Command Palette (⌘K)">
             <IconButton
               size="small"
@@ -247,7 +241,6 @@ export function Layout({ children }: LayoutProps) {
 
           <LiveClock />
 
-          {/* User section */}
           {isAuthenticated ? (
             <>
               <IconButton
@@ -308,7 +301,6 @@ export function Layout({ children }: LayoutProps) {
         </Toolbar>
       </AppBar>
 
-      {/* Ticker tape */}
       <TickerTape items={tickerItems.length > 0 ? tickerItems : undefined} />
 
       <Box component="main" sx={{ flexGrow: 1, py: 2.5, px: { xs: 1.5, md: 2.5 } }}>
