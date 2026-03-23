@@ -6,6 +6,7 @@ import { RegisterPage } from './pages/RegisterPage'
 import { EntitiesPage } from './pages/EntitiesPage'
 import { WatchlistPage } from './pages/WatchlistPage'
 import { NotesPage } from './pages/NotesPage'
+import { PaperTradingPage } from './pages/PaperTradingPage'
 import { CalendarPage } from './pages/CalendarPage'
 import { EntityDetailPage } from './pages/EntityDetailPage'
 import { NotFoundPage } from './pages/NotFoundPage'
@@ -27,6 +28,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <WatchlistPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/paper-trading"
+            element={
+              <ProtectedRoute>
+                <PaperTradingPage />
               </ProtectedRoute>
             }
           />

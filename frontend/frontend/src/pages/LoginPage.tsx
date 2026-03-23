@@ -21,7 +21,7 @@ import EmailIcon from '@mui/icons-material/Email'
 import LockIcon from '@mui/icons-material/Lock'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
-import TerminalIcon from '@mui/icons-material/Terminal'
+import LoginIcon from '@mui/icons-material/Login'
 
 type LoginFormValues = {
   email: string
@@ -82,7 +82,7 @@ export function LoginPage() {
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2.5 }}>
-            <TerminalIcon sx={{ color: 'rgba(0,212,255,0.5)', fontSize: 18 }} />
+            <LoginIcon sx={{ color: 'rgba(0,212,255,0.5)', fontSize: 18 }} />
             <Typography
               sx={{
                 fontSize: '0.62rem',

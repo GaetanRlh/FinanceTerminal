@@ -1,6 +1,8 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api'
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  (import.meta.env.DEV ? '/api' : 'http://127.0.0.1:8000/api')
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -14,13 +16,36 @@ export function setAuthToken(token: string | null) {
   }
 }
 
-// Synchronously set token on module load so the first API call is already authenticated
 if (typeof window !== 'undefined') {
   const _stored = window.localStorage.getItem('rt_access_token')
   if (_stored) setAuthToken(_stored)
 }
 
-// Automatically refresh the access token when it expires (401)
+let refreshInFlight: Promise<void> | null = null
+
+async function refreshAccessToken(): Promise<boolean> {
+  const refresh = localStorage.getItem('rt_refresh_token')
+  if (!refresh) return false
+  if (!refreshInFlight) {
+    refreshInFlight = axios
+      .post(`${API_BASE_URL}/auth/token/refresh/`, { refresh })
+      .then((res) => {
+        const newAccess: string = res.data.access
+        localStorage.setItem('rt_access_token', newAccess)
+        api.defaults.headers.common.Authorization = `Bearer ${newAccess}`
+      })
+      .finally(() => {
+        refreshInFlight = null
+      })
+  }
+  try {
+    await refreshInFlight
+    return true
+  } catch {
+    return false
+  }
+}
+
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
@@ -29,18 +54,12 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401 && !original._retry && !isTokenEndpoint) {
       original._retry = true
-      const refresh = localStorage.getItem('rt_refresh_token')
-
-      if (refresh) {
-        try {
-          const res = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, { refresh })
-          const newAccess: string = res.data.access
-          localStorage.setItem('rt_access_token', newAccess)
-          api.defaults.headers.common.Authorization = `Bearer ${newAccess}`
-          original.headers.Authorization = `Bearer ${newAccess}`
+      const ok = await refreshAccessToken()
+      if (ok) {
+        const token = localStorage.getItem('rt_access_token')
+        if (token) {
+          original.headers.Authorization = `Bearer ${token}`
           return api(original)
-        } catch {
-          // refresh token also expired — kick the user out
         }
       }
 
@@ -310,6 +329,96 @@ export type NoteItem = {
   created_at: string
 }
 
+export type PaperPositionLive = {
+  ticker: string
+  shares: string
+  avg_cost: string
+  last_price: string
+  prev_close: string
+  market_value: string
+  unrealized_pnl: string
+  day_pnl: string
+  sector: string
+}
+
+export type PaperTradeItem = {
+  id: number
+  ticker: string
+  action: 'BUY' | 'SELL'
+  shares: string
+  price: string
+  total: string
+  realized_pnl: string
+  executed_at: string
+}
+
+export type PaperOrderItem = {
+  id: number
+  ticker: string
+  action: 'BUY' | 'SELL'
+  order_type: 'MARKET' | 'LIMIT' | 'STOP'
+  shares: string
+  trigger_price: string | null
+  take_profit_price: string | null
+  stop_loss_price: string | null
+  status: 'PENDING' | 'FILLED' | 'CANCELLED' | 'REJECTED'
+  status_message: string
+  filled_price: string | null
+  filled_at: string | null
+  trade: number | null
+  created_at: string
+  updated_at: string
+}
+
+export type PaperPortfolioData = {
+  id: number
+  cash_balance: string
+  summary: {
+    cash_balance: string
+    market_value: string
+    invested_cost: string
+    total_equity: string
+    unrealized_pnl: string
+    unrealized_pnl_pct: string
+    day_pnl: string
+    day_pnl_pct: string
+    cash_ratio_pct: string
+    invested_ratio_pct: string
+    largest_position_pct: string
+  }
+  positions_live: PaperPositionLive[]
+  orders?: PaperOrderItem[]
+  trades: PaperTradeItem[]
+}
+
+export type PaperPerformanceData = {
+  period: string
+  series: Array<{
+    id: number
+    captured_at: string
+    cash_balance: string
+    market_value: string
+    total_equity: string
+  }>
+  stats: {
+    points: number
+    return_pct: string
+    max_drawdown_pct: string
+    avg_daily_return_pct: string
+  }
+}
+
+export type PaperBenchmarkData = {
+  benchmark: string
+  period: string
+  portfolio_return_pct: string
+  benchmark_return_pct: string
+  alpha_pct: string
+  beta: string
+  portfolio_points: number
+  benchmark_points: number
+}
+
 export type EntityContextData = {
   symbol: string
   overview: CompanyOverview
@@ -365,6 +474,7 @@ export type AlertRule = {
     | 'PRICE_BELOW'
     | 'MOVE_UP_PCT'
     | 'MOVE_DOWN_PCT'
+    | 'DRAWDOWN_PCT'
     | 'EVENT_SOON_MINUTES'
   symbol: string
   threshold: string
@@ -458,6 +568,56 @@ export async function deleteNote(id: number): Promise<void> {
   await api.delete(`/market/notes/${id}/`)
 }
 
+export async function getPaperPortfolio(): Promise<PaperPortfolioData> {
+  const response = await api.get('/market/paper/portfolio/')
+  return response.data as PaperPortfolioData
+}
+
+export async function executePaperTrade(data: {
+  ticker: string
+  action: 'BUY' | 'SELL'
+  shares: number
+  order_type?: 'MARKET' | 'LIMIT' | 'STOP'
+  trigger_price?: number
+  take_profit_price?: number
+  stop_loss_price?: number
+}): Promise<{ order: PaperOrderItem; trade?: PaperTradeItem } | PaperOrderItem> {
+  const response = await api.post('/market/paper/trade/', data)
+  return response.data as { order: PaperOrderItem; trade?: PaperTradeItem } | PaperOrderItem
+}
+
+export async function getPaperOrders(): Promise<PaperOrderItem[]> {
+  const response = await api.get('/market/paper/orders/')
+  return response.data as PaperOrderItem[]
+}
+
+export async function cancelPaperOrder(id: number): Promise<PaperOrderItem> {
+  const response = await api.patch(`/market/paper/orders/${id}/`, { status: 'CANCELLED' })
+  return response.data as PaperOrderItem
+}
+
+export async function evaluatePaperOrders(): Promise<{ filled: number; pending: number }> {
+  const response = await api.post('/market/paper/orders/evaluate/')
+  return response.data as { filled: number; pending: number }
+}
+
+export async function getPaperPerformance(period: '1W' | '1M' | '3M' | '6M' | 'YTD' = '1M'): Promise<PaperPerformanceData> {
+  const response = await api.get('/market/paper/performance/', { params: { period } })
+  return response.data as PaperPerformanceData
+}
+
+export async function getPaperBenchmark(
+  params?: { benchmark?: string; period?: '1W' | '1M' | '3M' | '6M' | 'YTD' }
+): Promise<PaperBenchmarkData> {
+  const response = await api.get('/market/paper/benchmark/', { params })
+  return response.data as PaperBenchmarkData
+}
+
+export async function getPaperTrades(params?: { action?: 'BUY' | 'SELL' }): Promise<PaperTradeItem[]> {
+  const response = await api.get('/market/paper/trades/', { params })
+  return response.data as PaperTradeItem[]
+}
+
 export async function getEntityContext(symbol: string): Promise<EntityContextData> {
   const response = await api.get('/market/entity-context/', { params: { symbol } })
   return response.data as EntityContextData
@@ -542,6 +702,26 @@ export async function acknowledgeAlertEvent(id: number, acknowledged: boolean): 
 export async function evaluateAlertRules(): Promise<{ created: number; unacknowledged: number }> {
   const response = await api.post('/market/alerts/evaluate/')
   return response.data as { created: number; unacknowledged: number }
+}
+
+export function formatApiError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    if (err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
+      return 'Network error — backend unreachable or wrong API URL.'
+    }
+    const status = err.response?.status
+    const data = err.response?.data as Record<string, unknown> | string | undefined
+    if (data && typeof data === 'object') {
+      if (typeof data.detail === 'string') return data.detail
+      if (Array.isArray(data.detail) && data.detail[0] && typeof (data.detail[0] as { msg?: string }).msg === 'string') {
+        return (data.detail[0] as { msg: string }).msg
+      }
+      if (typeof data.error === 'string') return data.error
+    }
+    if (status === 401) return 'Not signed in or session expired.'
+    if (status) return `HTTP ${status}`
+  }
+  return err instanceof Error ? err.message : 'Error'
 }
 
 

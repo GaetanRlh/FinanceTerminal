@@ -15,6 +15,7 @@ import StarBorderIcon from '@mui/icons-material/StarBorder'
 import NoteIcon from '@mui/icons-material/Note'
 import ExploreIcon from '@mui/icons-material/Explore'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
+import ShowChartIcon from '@mui/icons-material/ShowChart'
 import EventNoteIcon from '@mui/icons-material/EventNote'
 import KeyboardReturnIcon from '@mui/icons-material/KeyboardReturn'
 
@@ -77,6 +78,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       icon: <StarBorderIcon sx={{ fontSize: 16 }} />,
       shortcut: 'G W',
       action: () => go('/watchlist'),
+      category: 'Navigate',
+    },
+    {
+      id: 'paper-trading',
+      label: 'Paper Trading',
+      description: 'Simulated buy/sell portfolio',
+      icon: <ShowChartIcon sx={{ fontSize: 16 }} />,
+      shortcut: 'G P',
+      action: () => go('/paper-trading'),
       category: 'Navigate',
     },
     {

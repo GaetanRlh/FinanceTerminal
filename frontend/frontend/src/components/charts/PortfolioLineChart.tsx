@@ -19,9 +19,10 @@ type PortfolioLineChartProps = {
   valueFormatter?: (v: number) => string
   period?: string
   onPeriodChange?: (p: string) => void
+  periodOptions?: string[]
 }
 
-const PERIODS = ['1M', '3M', '6M', '1Y', 'ALL']
+const DEFAULT_PERIOD_OPTIONS = ['1M', '3M', '6M', '1Y', 'ALL']
 
 function CustomTooltip({ active, payload, label, valueFormatter }: {
   active?: boolean
@@ -57,6 +58,7 @@ export function PortfolioLineChart({
   valueFormatter = (v) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
   period = '1M',
   onPeriodChange,
+  periodOptions = DEFAULT_PERIOD_OPTIONS,
 }: PortfolioLineChartProps) {
   if (data.length === 0) {
     return (
@@ -93,8 +95,8 @@ export function PortfolioLineChart({
           </Box>
         </Box>
         {onPeriodChange && (
-          <Stack direction="row" spacing={0.5}>
-            {PERIODS.map((p) => (
+          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+            {periodOptions.map((p) => (
               <Chip
                 key={p}
                 label={p}

@@ -1,0 +1,26 @@
+import type { MessageKey } from './en'
+
+export const fr: Record<MessageKey, string> = {
+  navMarket: 'MARCHÉ',
+  navExplorer: 'EXPLORER',
+  navWatchlist: 'LISTE',
+  navPaper: 'SIMULATION',
+  navCalendar: 'AGENDA',
+  navNotes: 'NOTES',
+  menuDashboard: 'Tableau de bord',
+  menuWatchlist: 'Liste de suivi',
+  menuNotes: 'Notes',
+  menuPaper: 'Trading simulé',
+  menuCalendar: 'Calendrier',
+  menuSignOut: 'Déconnexion',
+  authLogin: 'Connexion',
+  authRegister: "S'inscrire",
+  searchPlaceholder: 'Symbole ou nom…',
+  searchAria: 'Rechercher',
+  clockTooltip: 'New York (heure de la côte est)',
+  clockPrefix: 'NYC',
+  cmdPaletteTooltip: 'Palette de commandes (⌘K)',
+  footerTagline: 'FinanceTerminal v2.0 — Données Yahoo Finance',
+  footerLive: 'EN DIRECT',
+  footerCommands: '⌘K — palette de commandes',
+}

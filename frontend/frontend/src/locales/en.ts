@@ -1,0 +1,26 @@
+export const en = {
+  navMarket: 'MARKET',
+  navExplorer: 'EXPLORER',
+  navWatchlist: 'WATCHLIST',
+  navPaper: 'PAPER',
+  navCalendar: 'CALENDAR',
+  navNotes: 'NOTES',
+  menuDashboard: 'Dashboard',
+  menuWatchlist: 'Watchlist',
+  menuNotes: 'Notes',
+  menuPaper: 'Paper Trading',
+  menuCalendar: 'Calendar',
+  menuSignOut: 'Sign Out',
+  authLogin: 'Login',
+  authRegister: 'Register',
+  searchPlaceholder: 'Symbol or name...',
+  searchAria: 'Search',
+  clockTooltip: 'New York (EST/EDT)',
+  clockPrefix: 'NYC',
+  cmdPaletteTooltip: 'Command palette (⌘K)',
+  footerTagline: 'FinanceTerminal v2.0 — Powered by Yahoo Finance',
+  footerLive: 'LIVE',
+  footerCommands: 'Press ⌘K for commands',
+} as const
+
+export type MessageKey = keyof typeof en
