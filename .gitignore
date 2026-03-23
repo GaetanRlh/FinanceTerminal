@@ -39,6 +39,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Local / outils
+.claude/
+FinanceTerminal-handoff.zip
+
 # IDE
 .vscode/*
 !.vscode/extensions.json
