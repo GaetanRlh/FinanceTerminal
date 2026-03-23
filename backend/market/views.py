@@ -2,6 +2,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, time as dt_time
 
 import yfinance as yf
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
@@ -12,6 +13,11 @@ from .models import (
     Entity,
     WatchlistItem,
     Note,
+    PaperPortfolio,
+    PaperPosition,
+    PaperTrade,
+    PaperOrder,
+    PortfolioSnapshot,
     EconomicEvent,
     EarningsEvent,
     EventReminder,
@@ -22,6 +28,11 @@ from .serializers import (
     EntitySerializer,
     WatchlistItemSerializer,
     NoteSerializer,
+    PaperPortfolioSerializer,
+    PaperTradeExecutionSerializer,
+    PaperTradeSerializer,
+    PaperOrderSerializer,
+    PortfolioSnapshotSerializer,
     EconomicEventSerializer,
     EarningsEventSerializer,
     EventReminderSerializer,
@@ -32,8 +43,6 @@ from .services import SymbolSearch, YFinanceClient
 
 
 class AlphaVantageClient:
-    """Compatibility wrapper used by existing API tests."""
-
     def __init__(self):
         self._search = SymbolSearch()
         self._yf = YFinanceClient()
@@ -82,6 +91,28 @@ def _emit_alert_event(rule: AlertRule, message: str, severity: str, payload: dic
     rule.last_triggered_at = timezone.now()
     rule.save(update_fields=["last_triggered_at", "updated_at"])
     return True
+
+
+def _portfolio_drawdown_pct(user) -> Decimal:
+    portfolio = PaperPortfolio.objects.filter(user=user).first()
+    if not portfolio:
+        return Decimal("0")
+    market_value = Decimal("0")
+    invested_cost = Decimal("0")
+    for pos in portfolio.positions.all():
+        quote = AlphaVantageClient().global_quote(pos.ticker)
+        quote_payload = quote.get("Global Quote") or {}
+        last_price = _decimal_from_quote_field(quote_payload, "05. price") or Decimal(str(pos.avg_cost))
+        shares = Decimal(str(pos.shares))
+        avg_cost = Decimal(str(pos.avg_cost))
+        market_value += shares * last_price
+        invested_cost += shares * avg_cost
+    if invested_cost <= 0:
+        return Decimal("0")
+    pnl_pct = (market_value - invested_cost) / invested_cost * Decimal("100")
+    if pnl_pct >= 0:
+        return Decimal("0")
+    return -pnl_pct
 
 
 def _evaluate_single_rule(rule: AlertRule) -> bool:
@@ -133,6 +164,17 @@ def _evaluate_single_rule(rule: AlertRule) -> bool:
                     AlertEvent.SEVERITY_WARNING,
                     {"symbol": symbol, "move_pct": f"{move_pct:.4f}", "threshold": f"{threshold:.4f}"},
                 )
+        return False
+
+    if rule.rule_type == AlertRule.TYPE_DRAWDOWN_PCT:
+        dd = _portfolio_drawdown_pct(rule.user)
+        if dd >= threshold:
+            return _emit_alert_event(
+                rule,
+                f"Portfolio drawdown reached {dd:.2f}% (threshold {threshold:.2f}%).",
+                AlertEvent.SEVERITY_CRITICAL,
+                {"drawdown_pct": f"{dd:.4f}", "threshold": f"{threshold:.4f}"},
+            )
         return False
 
     if rule.rule_type == AlertRule.TYPE_EVENT_SOON_MINUTES:
@@ -196,6 +238,187 @@ def _fetch_earnings_history(symbol: str, limit: int = 6) -> list[dict]:
     except Exception:
         return items
     return items
+
+
+def _compute_portfolio_state(portfolio: PaperPortfolio) -> dict:
+    cash = Decimal(str(portfolio.cash_balance))
+    market_value = Decimal("0")
+    invested_cost = Decimal("0")
+    day_pnl_total = Decimal("0")
+    ticker_exposure: dict[str, Decimal] = {}
+    live_positions: list[dict] = []
+
+    for pos in portfolio.positions.all().order_by("ticker"):
+        quote = AlphaVantageClient().global_quote(pos.ticker)
+        quote_payload = quote.get("Global Quote") or {}
+        price = _decimal_from_quote_field(quote_payload, "05. price") or Decimal(str(pos.avg_cost))
+        prev_close = _decimal_from_quote_field(quote_payload, "08. previous close") or price
+
+        shares = Decimal(str(pos.shares))
+        avg_cost = Decimal(str(pos.avg_cost))
+        position_value = shares * price
+        cost_value = shares * avg_cost
+        unrealized = position_value - cost_value
+        day_pnl = (price - prev_close) * shares
+
+        market_value += position_value
+        invested_cost += cost_value
+        day_pnl_total += day_pnl
+        ticker_exposure[pos.ticker] = position_value
+
+        entity = Entity.objects.filter(ticker__iexact=pos.ticker).first()
+        sector = entity.secteur.strip() if entity and entity.secteur else "Unknown"
+
+        live_positions.append(
+            {
+                "ticker": pos.ticker,
+                "shares": f"{shares:.6f}",
+                "avg_cost": f"{avg_cost:.4f}",
+                "last_price": f"{price:.4f}",
+                "prev_close": f"{prev_close:.4f}",
+                "market_value": f"{position_value:.2f}",
+                "unrealized_pnl": f"{unrealized:.2f}",
+                "day_pnl": f"{day_pnl:.2f}",
+                "sector": sector,
+            }
+        )
+
+    total_equity = cash + market_value
+    cash_ratio = (cash / total_equity * Decimal("100")) if total_equity > 0 else Decimal("0")
+    invested_ratio = (market_value / total_equity * Decimal("100")) if total_equity > 0 else Decimal("0")
+    largest_position_pct = max(ticker_exposure.values()) / market_value * Decimal("100") if market_value > 0 and ticker_exposure else Decimal("0")
+
+    return {
+        "cash": cash,
+        "market_value": market_value,
+        "invested_cost": invested_cost,
+        "day_pnl_total": day_pnl_total,
+        "total_equity": total_equity,
+        "live_positions": live_positions,
+        "summary": {
+            "cash_balance": f"{cash:.2f}",
+            "market_value": f"{market_value:.2f}",
+            "invested_cost": f"{invested_cost:.2f}",
+            "total_equity": f"{total_equity:.2f}",
+            "unrealized_pnl": f"{(market_value - invested_cost):.2f}",
+            "unrealized_pnl_pct": f"{(((market_value - invested_cost) / invested_cost) * Decimal('100')):.2f}" if invested_cost > 0 else "0.00",
+            "day_pnl": f"{day_pnl_total:.2f}",
+            "day_pnl_pct": f"{((day_pnl_total / invested_cost) * Decimal('100')):.2f}" if invested_cost > 0 else "0.00",
+            "cash_ratio_pct": f"{cash_ratio:.2f}",
+            "invested_ratio_pct": f"{invested_ratio:.2f}",
+            "largest_position_pct": f"{largest_position_pct:.2f}",
+        },
+    }
+
+
+def _record_snapshot(portfolio: PaperPortfolio) -> PortfolioSnapshot:
+    state = _compute_portfolio_state(portfolio)
+    return PortfolioSnapshot.objects.create(
+        portfolio=portfolio,
+        cash_balance=state["cash"],
+        market_value=state["market_value"],
+        total_equity=state["total_equity"],
+    )
+
+
+def _apply_fill(portfolio: PaperPortfolio, ticker: str, action: str, shares: Decimal, price: Decimal) -> tuple[PaperTrade | None, str | None]:
+    total = price * shares
+    position = PaperPosition.objects.select_for_update().filter(portfolio=portfolio, ticker=ticker).first()
+    realized_pnl = Decimal("0")
+    if action == PaperTrade.ACTION_BUY:
+        if total > Decimal(str(portfolio.cash_balance)):
+            return None, "Insufficient cash balance for this trade."
+        if position:
+            old_shares = Decimal(str(position.shares))
+            old_avg = Decimal(str(position.avg_cost))
+            new_shares = old_shares + shares
+            new_avg = ((old_avg * old_shares) + (price * shares)) / new_shares
+            position.shares = new_shares
+            position.avg_cost = new_avg
+            position.save(update_fields=["shares", "avg_cost"])
+        else:
+            PaperPosition.objects.create(portfolio=portfolio, ticker=ticker, shares=shares, avg_cost=price)
+        portfolio.cash_balance = Decimal(str(portfolio.cash_balance)) - total
+        portfolio.save(update_fields=["cash_balance"])
+    else:
+        if not position:
+            return None, "No position found for this symbol."
+        existing_shares = Decimal(str(position.shares))
+        avg_cost_before = Decimal(str(position.avg_cost))
+        if shares > existing_shares:
+            return None, "Cannot sell more shares than currently held."
+        realized_pnl = (price - avg_cost_before) * shares
+        remaining = existing_shares - shares
+        if remaining == 0:
+            position.delete()
+        else:
+            position.shares = remaining
+            position.save(update_fields=["shares"])
+        portfolio.cash_balance = Decimal(str(portfolio.cash_balance)) + total
+        portfolio.save(update_fields=["cash_balance"])
+
+    trade = PaperTrade.objects.create(
+        portfolio=portfolio,
+        ticker=ticker,
+        action=action,
+        shares=shares,
+        price=price,
+        total=total,
+        realized_pnl=realized_pnl,
+    )
+    _record_snapshot(portfolio)
+    return trade, None
+
+
+def _should_fill_order(order: PaperOrder, current_price: Decimal) -> bool:
+    trigger = Decimal(str(order.trigger_price)) if order.trigger_price is not None else None
+    if order.order_type == PaperOrder.TYPE_MARKET:
+        return True
+    if order.order_type == PaperOrder.TYPE_LIMIT:
+        if trigger is None:
+            return False
+        return current_price <= trigger if order.action == PaperTrade.ACTION_BUY else current_price >= trigger
+    if order.order_type == PaperOrder.TYPE_STOP:
+        if trigger is None:
+            return False
+        return current_price >= trigger if order.action == PaperTrade.ACTION_BUY else current_price <= trigger
+    return False
+
+
+def evaluate_pending_orders_for_user(user) -> int:
+    filled = 0
+    pending = PaperOrder.objects.filter(portfolio__user=user, status=PaperOrder.STATUS_PENDING).select_related("portfolio")
+    for order in pending:
+        quote = AlphaVantageClient().global_quote(order.ticker)
+        payload = quote.get("Global Quote") or {}
+        price = _decimal_from_quote_field(payload, "05. price")
+        if price is None or not _should_fill_order(order, price):
+            continue
+        with transaction.atomic():
+            portfolio = PaperPortfolio.objects.select_for_update().get(pk=order.portfolio_id)
+            order_locked = PaperOrder.objects.select_for_update().get(pk=order.pk)
+            if order_locked.status != PaperOrder.STATUS_PENDING:
+                continue
+            trade, err = _apply_fill(
+                portfolio=portfolio,
+                ticker=order_locked.ticker,
+                action=order_locked.action,
+                shares=Decimal(str(order_locked.shares)),
+                price=price,
+            )
+            if err:
+                order_locked.status = PaperOrder.STATUS_REJECTED
+                order_locked.status_message = err
+                order_locked.save(update_fields=["status", "status_message", "updated_at"])
+                continue
+            order_locked.status = PaperOrder.STATUS_FILLED
+            order_locked.filled_price = price
+            order_locked.filled_at = timezone.now()
+            order_locked.trade = trade
+            order_locked.status_message = "Filled"
+            order_locked.save(update_fields=["status", "filled_price", "filled_at", "trade", "status_message", "updated_at"])
+            filled += 1
+    return filled
 
 
 class SymbolSearchView(APIView):
@@ -421,6 +644,254 @@ class NoteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+
+
+class PaperPortfolioView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        evaluate_pending_orders_for_user(request.user)
+        portfolio, _ = PaperPortfolio.objects.get_or_create(user=request.user)
+        data = PaperPortfolioSerializer(portfolio).data
+        state = _compute_portfolio_state(portfolio)
+        data["positions_live"] = state["live_positions"]
+        data["summary"] = state["summary"]
+        data["orders"] = PaperOrderSerializer(portfolio.orders.all()[:30], many=True).data
+        data["trades"] = data["trades"][:20]
+        _record_snapshot(portfolio)
+        return Response(data)
+
+
+class PaperTradeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = PaperTradeExecutionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        ticker = serializer.validated_data["ticker"].strip().upper()
+        action = serializer.validated_data["action"]
+        order_type = serializer.validated_data.get("order_type", PaperOrder.TYPE_MARKET)
+        shares = Decimal(str(serializer.validated_data["shares"]))
+        trigger_price = serializer.validated_data.get("trigger_price")
+        take_profit_price = serializer.validated_data.get("take_profit_price")
+        stop_loss_price = serializer.validated_data.get("stop_loss_price")
+
+        with transaction.atomic():
+            portfolio, _ = PaperPortfolio.objects.select_for_update().get_or_create(user=request.user)
+
+            order = PaperOrder.objects.create(
+                portfolio=portfolio,
+                ticker=ticker,
+                action=action,
+                order_type=order_type,
+                shares=shares,
+                trigger_price=trigger_price,
+                take_profit_price=take_profit_price,
+                stop_loss_price=stop_loss_price,
+                status=PaperOrder.STATUS_PENDING if order_type != PaperOrder.TYPE_MARKET else PaperOrder.STATUS_FILLED,
+            )
+
+            if order_type == PaperOrder.TYPE_MARKET:
+                quote = AlphaVantageClient().global_quote(ticker)
+                payload = quote.get("Global Quote") or {}
+                price = _decimal_from_quote_field(payload, "05. price")
+                if price is None:
+                    order.status = PaperOrder.STATUS_REJECTED
+                    order.status_message = "Unable to fetch live price for this symbol."
+                    order.save(update_fields=["status", "status_message", "updated_at"])
+                    return Response({"error": order.status_message}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+                trade, err = _apply_fill(portfolio, ticker, action, shares, price)
+                if err:
+                    order.status = PaperOrder.STATUS_REJECTED
+                    order.status_message = err
+                    order.save(update_fields=["status", "status_message", "updated_at"])
+                    return Response({"error": err}, status=status.HTTP_400_BAD_REQUEST)
+                order.trade = trade
+                order.filled_price = price
+                order.filled_at = timezone.now()
+                order.status = PaperOrder.STATUS_FILLED
+                order.status_message = "Filled"
+                order.save(update_fields=["trade", "filled_price", "filled_at", "status", "status_message", "updated_at"])
+                return Response(
+                    {
+                        "order": PaperOrderSerializer(order).data,
+                        "trade": PaperTradeSerializer(trade).data,
+                    },
+                    status=status.HTTP_201_CREATED,
+                )
+
+        return Response(PaperOrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+
+class PaperOrderViewSet(viewsets.ModelViewSet):
+    serializer_class = PaperOrderSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        return PaperOrder.objects.filter(portfolio__user=self.request.user)
+
+    def partial_update(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status != PaperOrder.STATUS_PENDING:
+            return Response({"error": "Only pending orders can be modified."}, status=status.HTTP_400_BAD_REQUEST)
+        next_status = (request.data.get("status") or "").strip().upper()
+        if next_status != PaperOrder.STATUS_CANCELLED:
+            return Response({"error": "Only status=CANCELLED is supported."}, status=status.HTTP_400_BAD_REQUEST)
+        order.status = PaperOrder.STATUS_CANCELLED
+        order.status_message = "Cancelled by user"
+        order.save(update_fields=["status", "status_message", "updated_at"])
+        return Response(PaperOrderSerializer(order).data)
+
+
+class PaperOrderEvaluateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        filled = evaluate_pending_orders_for_user(request.user)
+        pending = PaperOrder.objects.filter(portfolio__user=request.user, status=PaperOrder.STATUS_PENDING).count()
+        return Response({"filled": filled, "pending": pending})
+
+
+class PaperPerformanceView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        period = (request.query_params.get("period") or "1M").upper()
+        period_days = {"1W": 7, "1M": 30, "3M": 90, "6M": 180, "YTD": 366}
+        days = period_days.get(period, 30)
+        now = timezone.now()
+        start = datetime(now.year, 1, 1, tzinfo=timezone.UTC) if period == "YTD" else now - timedelta(days=days)
+
+        portfolio, _ = PaperPortfolio.objects.get_or_create(user=request.user)
+        _record_snapshot(portfolio)
+        snapshots = PortfolioSnapshot.objects.filter(portfolio=portfolio, captured_at__gte=start).order_by("captured_at")
+        series = PortfolioSnapshotSerializer(snapshots, many=True).data
+        points = [Decimal(str(p["total_equity"])) for p in series]
+
+        if len(points) >= 2 and points[0] > 0:
+            return_pct = ((points[-1] - points[0]) / points[0]) * Decimal("100")
+        else:
+            return_pct = Decimal("0")
+
+        max_drawdown = Decimal("0")
+        peak = points[0] if points else Decimal("0")
+        for value in points:
+            if value > peak:
+                peak = value
+            if peak > 0:
+                dd = (peak - value) / peak * Decimal("100")
+                if dd > max_drawdown:
+                    max_drawdown = dd
+
+        daily_returns = []
+        for i in range(1, len(points)):
+            prev = points[i - 1]
+            if prev > 0:
+                daily_returns.append((points[i] - prev) / prev * Decimal("100"))
+        avg_daily_return = sum(daily_returns, Decimal("0")) / Decimal(str(len(daily_returns))) if daily_returns else Decimal("0")
+
+        return Response(
+            {
+                "period": period,
+                "series": series,
+                "stats": {
+                    "points": len(series),
+                    "return_pct": f"{return_pct:.2f}",
+                    "max_drawdown_pct": f"{max_drawdown:.2f}",
+                    "avg_daily_return_pct": f"{avg_daily_return:.4f}",
+                },
+            }
+        )
+
+
+def _benchmark_series(symbol: str, period: str) -> list[tuple[str, Decimal]]:
+    period_map = {"1W": "1mo", "1M": "1mo", "3M": "3mo", "6M": "6mo", "YTD": "1y"}
+    raw = AlphaVantageClient().time_series_daily(symbol, period=period_map.get(period, "1mo"))
+    daily = raw.get("Time Series (Daily)") or {}
+    points: list[tuple[str, Decimal]] = []
+    for date_key in sorted(daily.keys()):
+        close_val = _to_decimal_or_none((daily.get(date_key) or {}).get("4. close"))
+        if close_val is not None and close_val > 0:
+            points.append((date_key, close_val))
+    return points
+
+
+def _returns_from_series(values: list[Decimal]) -> list[Decimal]:
+    rets = []
+    for idx in range(1, len(values)):
+        prev = values[idx - 1]
+        if prev > 0:
+            rets.append((values[idx] - prev) / prev)
+    return rets
+
+
+class PaperBenchmarkView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        benchmark = (request.query_params.get("benchmark") or "SPY").strip().upper()
+        period = (request.query_params.get("period") or "1M").upper()
+        period_days = {"1W": 7, "1M": 30, "3M": 90, "6M": 180, "YTD": 366}
+        now = timezone.now()
+        start = datetime(now.year, 1, 1, tzinfo=timezone.UTC) if period == "YTD" else now - timedelta(days=period_days.get(period, 30))
+
+        portfolio, _ = PaperPortfolio.objects.get_or_create(user=request.user)
+        _record_snapshot(portfolio)
+        snapshots = PortfolioSnapshot.objects.filter(portfolio=portfolio, captured_at__gte=start).order_by("captured_at")
+        portfolio_values = [Decimal(str(s.total_equity)) for s in snapshots]
+        benchmark_points = _benchmark_series(benchmark, period)
+        benchmark_values = [price for _, price in benchmark_points]
+
+        portfolio_return_pct = Decimal("0")
+        if len(portfolio_values) >= 2 and portfolio_values[0] > 0:
+            portfolio_return_pct = (portfolio_values[-1] - portfolio_values[0]) / portfolio_values[0] * Decimal("100")
+
+        benchmark_return_pct = Decimal("0")
+        if len(benchmark_values) >= 2 and benchmark_values[0] > 0:
+            benchmark_return_pct = (benchmark_values[-1] - benchmark_values[0]) / benchmark_values[0] * Decimal("100")
+
+        alpha_pct = portfolio_return_pct - benchmark_return_pct
+
+        port_rets = _returns_from_series(portfolio_values)
+        bench_rets = _returns_from_series(benchmark_values)
+        n = min(len(port_rets), len(bench_rets))
+        beta = Decimal("0")
+        if n >= 2:
+            x = bench_rets[:n]
+            y = port_rets[:n]
+            mean_x = sum(x, Decimal("0")) / Decimal(str(n))
+            mean_y = sum(y, Decimal("0")) / Decimal(str(n))
+            cov = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n)) / Decimal(str(n))
+            var_x = sum((x[i] - mean_x) * (x[i] - mean_x) for i in range(n)) / Decimal(str(n))
+            if var_x > 0:
+                beta = cov / var_x
+
+        return Response(
+            {
+                "benchmark": benchmark,
+                "period": period,
+                "portfolio_return_pct": f"{portfolio_return_pct:.2f}",
+                "benchmark_return_pct": f"{benchmark_return_pct:.2f}",
+                "alpha_pct": f"{alpha_pct:.2f}",
+                "beta": f"{beta:.3f}",
+                "portfolio_points": len(portfolio_values),
+                "benchmark_points": len(benchmark_values),
+            }
+        )
+
+
+class PaperTradeViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = PaperTradeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = PaperTrade.objects.filter(portfolio__user=self.request.user)
+        action = (self.request.query_params.get("action") or "").strip().upper()
+        if action in {PaperTrade.ACTION_BUY, PaperTrade.ACTION_SELL}:
+            qs = qs.filter(action=action)
+        return qs
 
 
 def _next_weekday(base: datetime, weekday: int, hour: int = 12, minute: int = 30) -> datetime:

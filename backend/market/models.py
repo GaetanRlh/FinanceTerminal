@@ -53,6 +53,112 @@ class Note(models.Model):
         return self.titre
 
 
+class PaperPortfolio(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="paper_portfolio",
+    )
+    cash_balance = models.DecimalField(max_digits=15, decimal_places=2, default=100000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PaperPosition(models.Model):
+    portfolio = models.ForeignKey(
+        PaperPortfolio,
+        on_delete=models.CASCADE,
+        related_name="positions",
+    )
+    ticker = models.CharField(max_length=20)
+    shares = models.DecimalField(max_digits=15, decimal_places=6)
+    avg_cost = models.DecimalField(max_digits=15, decimal_places=4)
+
+    class Meta:
+        ordering = ["ticker"]
+        unique_together = ("portfolio", "ticker")
+
+
+class PaperTrade(models.Model):
+    ACTION_BUY = "BUY"
+    ACTION_SELL = "SELL"
+    ACTION_CHOICES = [
+        (ACTION_BUY, "Buy"),
+        (ACTION_SELL, "Sell"),
+    ]
+
+    portfolio = models.ForeignKey(
+        PaperPortfolio,
+        on_delete=models.CASCADE,
+        related_name="trades",
+    )
+    ticker = models.CharField(max_length=20)
+    action = models.CharField(max_length=4, choices=ACTION_CHOICES)
+    shares = models.DecimalField(max_digits=15, decimal_places=6)
+    price = models.DecimalField(max_digits=15, decimal_places=4)
+    total = models.DecimalField(max_digits=15, decimal_places=2)
+    realized_pnl = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    executed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-executed_at"]
+
+
+class PaperOrder(models.Model):
+    TYPE_MARKET = "MARKET"
+    TYPE_LIMIT = "LIMIT"
+    TYPE_STOP = "STOP"
+    TYPE_CHOICES = [
+        (TYPE_MARKET, "Market"),
+        (TYPE_LIMIT, "Limit"),
+        (TYPE_STOP, "Stop"),
+    ]
+
+    STATUS_PENDING = "PENDING"
+    STATUS_FILLED = "FILLED"
+    STATUS_CANCELLED = "CANCELLED"
+    STATUS_REJECTED = "REJECTED"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_FILLED, "Filled"),
+        (STATUS_CANCELLED, "Cancelled"),
+        (STATUS_REJECTED, "Rejected"),
+    ]
+
+    portfolio = models.ForeignKey(
+        PaperPortfolio,
+        on_delete=models.CASCADE,
+        related_name="orders",
+    )
+    ticker = models.CharField(max_length=20)
+    action = models.CharField(max_length=4, choices=PaperTrade.ACTION_CHOICES)
+    order_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_MARKET)
+    shares = models.DecimalField(max_digits=15, decimal_places=6)
+    trigger_price = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    take_profit_price = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    stop_loss_price = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    status_message = models.CharField(max_length=255, blank=True)
+    filled_price = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True)
+    filled_at = models.DateTimeField(null=True, blank=True)
+    trade = models.ForeignKey(PaperTrade, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class PortfolioSnapshot(models.Model):
+    portfolio = models.ForeignKey(PaperPortfolio, on_delete=models.CASCADE, related_name="snapshots")
+    captured_at = models.DateTimeField(auto_now_add=True)
+    cash_balance = models.DecimalField(max_digits=15, decimal_places=2)
+    market_value = models.DecimalField(max_digits=15, decimal_places=2)
+    total_equity = models.DecimalField(max_digits=15, decimal_places=2)
+
+    class Meta:
+        ordering = ["captured_at"]
+
+
 class EconomicEvent(models.Model):
     EVENT_FOMC = "FOMC"
     EVENT_CPI = "CPI"
@@ -154,12 +260,14 @@ class AlertRule(models.Model):
     TYPE_PRICE_BELOW = "PRICE_BELOW"
     TYPE_MOVE_UP_PCT = "MOVE_UP_PCT"
     TYPE_MOVE_DOWN_PCT = "MOVE_DOWN_PCT"
+    TYPE_DRAWDOWN_PCT = "DRAWDOWN_PCT"
     TYPE_EVENT_SOON_MINUTES = "EVENT_SOON_MINUTES"
     TYPE_CHOICES = [
         (TYPE_PRICE_ABOVE, "Price Above"),
         (TYPE_PRICE_BELOW, "Price Below"),
         (TYPE_MOVE_UP_PCT, "Move Up (%)"),
         (TYPE_MOVE_DOWN_PCT, "Move Down (%)"),
+        (TYPE_DRAWDOWN_PCT, "Portfolio Drawdown (%)"),
         (TYPE_EVENT_SOON_MINUTES, "Event Soon (minutes)"),
     ]
 

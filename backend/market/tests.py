@@ -251,16 +251,16 @@ class AlertEngineTests(APITestCase):
     def test_patch_alert_acknowledged(self):
         rule = AlertRule.objects.create(
             user=self.user,
-            name="Event soon",
-            rule_type=AlertRule.TYPE_EVENT_SOON_MINUTES,
+            name="Portfolio drawdown",
+            rule_type=AlertRule.TYPE_DRAWDOWN_PCT,
             symbol="",
-            threshold="60",
+            threshold="5",
             enabled=True,
         )
         event = AlertEvent.objects.create(
             user=self.user,
             rule=rule,
-            message="Test alert message",
+            message="Portfolio drawdown reached 6.00%",
             severity=AlertEvent.SEVERITY_CRITICAL,
         )
         response = self.client.patch(f"/api/market/alerts/events/{event.id}/", {"acknowledged": True}, format="json")
@@ -269,9 +269,86 @@ class AlertEngineTests(APITestCase):
         self.assertTrue(event.acknowledged)
 
 
-class EntityContextViewTests(APITestCase):
+class PaperTradingAdvancedTests(APITestCase):
     def setUp(self):
+        self.user = User.objects.create_user(email="paper@example.com", password="testpass123", full_name="Paper User")
         self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    @patch("market.views.AlphaVantageClient")
+    def test_place_limit_order_and_evaluate_fill(self, mock_client_class):
+        mock_client_class.return_value.global_quote.return_value = {
+            "Global Quote": {"01. symbol": "AAPL", "05. price": "99.00", "08. previous close": "100.00"}
+        }
+        place = self.client.post(
+            "/api/market/paper/trade/",
+            {"ticker": "AAPL", "action": "BUY", "shares": "1", "order_type": "LIMIT", "trigger_price": "100"},
+            format="json",
+        )
+        self.assertEqual(place.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(place.json()["status"], "PENDING")
+
+        eval_res = self.client.post("/api/market/paper/orders/evaluate/", {}, format="json")
+        self.assertEqual(eval_res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(eval_res.json()["filled"], 1)
+
+    @patch("market.views.AlphaVantageClient")
+    def test_market_order_response_contains_order_and_trade(self, mock_client_class):
+        mock_client_class.return_value.global_quote.return_value = {
+            "Global Quote": {"01. symbol": "AAPL", "05. price": "100.00", "08. previous close": "99.00"}
+        }
+        res = self.client.post(
+            "/api/market/paper/trade/",
+            {"ticker": "AAPL", "action": "BUY", "shares": "1", "order_type": "MARKET"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        payload = res.json()
+        self.assertIn("order", payload)
+        self.assertIn("trade", payload)
+
+    @patch("market.views.AlphaVantageClient")
+    def test_paper_performance_endpoint(self, mock_client_class):
+        mock_client_class.return_value.global_quote.return_value = {
+            "Global Quote": {"01. symbol": "AAPL", "05. price": "100.00", "08. previous close": "98.00"}
+        }
+        self.client.post(
+            "/api/market/paper/trade/",
+            {"ticker": "AAPL", "action": "BUY", "shares": "1", "order_type": "MARKET"},
+            format="json",
+        )
+        perf = self.client.get("/api/market/paper/performance/", {"period": "1M"})
+        self.assertEqual(perf.status_code, status.HTTP_200_OK)
+        self.assertIn("series", perf.json())
+        self.assertIn("stats", perf.json())
+
+    @patch("market.views.AlphaVantageClient")
+    def test_benchmark_endpoint(self, mock_client_class):
+        mock_client_class.return_value.global_quote.return_value = {
+            "Global Quote": {"01. symbol": "AAPL", "05. price": "100.00", "08. previous close": "98.00"}
+        }
+        mock_client_class.return_value.time_series_daily.return_value = {
+            "Time Series (Daily)": {
+                "2026-01-01": {"4. close": "100"},
+                "2026-01-02": {"4. close": "101"},
+                "2026-01-03": {"4. close": "102"},
+            }
+        }
+        self.client.post(
+            "/api/market/paper/trade/",
+            {"ticker": "AAPL", "action": "BUY", "shares": "1", "order_type": "MARKET"},
+            format="json",
+        )
+        benchmark = self.client.get("/api/market/paper/benchmark/", {"benchmark": "SPY", "period": "1M"})
+        self.assertEqual(benchmark.status_code, status.HTTP_200_OK)
+        self.assertIn("alpha_pct", benchmark.json())
+
+
+class EntityContextTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(email="context@example.com", password="testpass123", full_name="Context User")
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
 
     @patch("market.views.AlphaVantageClient.global_quote")
     @patch("market.views.YFinanceClient.company_overview")

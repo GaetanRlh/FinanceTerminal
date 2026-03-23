@@ -10,6 +10,8 @@ router.register(r"notes", views.NoteViewSet, basename="note")
 router.register(r"calendar/reminders", views.EventReminderViewSet, basename="event-reminder")
 router.register(r"alerts/rules", views.AlertRuleViewSet, basename="alert-rule")
 router.register(r"alerts/events", views.AlertEventViewSet, basename="alert-event")
+router.register(r"paper/orders", views.PaperOrderViewSet, basename="paper-order")
+router.register(r"paper/trades", views.PaperTradeViewSet, basename="paper-trade-item")
 
 urlpatterns = [
     path("search/", views.SymbolSearchView.as_view(), name="market-search"),
@@ -24,5 +26,10 @@ urlpatterns = [
     path("calendar/economic/", views.EconomicCalendarView.as_view(), name="calendar-economic"),
     path("calendar/earnings/", views.EarningsCalendarView.as_view(), name="calendar-earnings"),
     path("alerts/evaluate/", views.AlertEvaluateView.as_view(), name="alerts-evaluate"),
+    path("paper/portfolio/", views.PaperPortfolioView.as_view(), name="paper-portfolio"),
+    path("paper/trade/", views.PaperTradeView.as_view(), name="paper-trade"),
+    path("paper/orders/evaluate/", views.PaperOrderEvaluateView.as_view(), name="paper-orders-evaluate"),
+    path("paper/performance/", views.PaperPerformanceView.as_view(), name="paper-performance"),
+    path("paper/benchmark/", views.PaperBenchmarkView.as_view(), name="paper-benchmark"),
     path("", include(router.urls)),
 ]

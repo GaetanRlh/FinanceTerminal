@@ -1,9 +1,16 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import (
     Entity,
     WatchlistItem,
     Note,
+    PaperPortfolio,
+    PaperPosition,
+    PaperTrade,
+    PaperOrder,
+    PortfolioSnapshot,
     EconomicEvent,
     EarningsEvent,
     EventReminder,
@@ -63,6 +70,101 @@ class NoteSerializer(serializers.ModelSerializer):
         model = Note
         fields = ("id", "entity", "entity_id", "titre", "contenu", "created_at")
         read_only_fields = ("id", "created_at", "entity")
+
+
+class PaperPositionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaperPosition
+        fields = ("id", "ticker", "shares", "avg_cost")
+        read_only_fields = fields
+
+
+class PaperTradeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaperTrade
+        fields = ("id", "ticker", "action", "shares", "price", "total", "realized_pnl", "executed_at")
+        read_only_fields = fields
+
+
+class PaperPortfolioSerializer(serializers.ModelSerializer):
+    positions = PaperPositionSerializer(many=True, read_only=True)
+    trades = PaperTradeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = PaperPortfolio
+        fields = ("id", "cash_balance", "created_at", "positions", "trades")
+        read_only_fields = fields
+
+
+class PaperTradeExecutionSerializer(serializers.Serializer):
+    ticker = serializers.CharField(max_length=20)
+    action = serializers.ChoiceField(choices=PaperTrade.ACTION_CHOICES)
+    order_type = serializers.ChoiceField(
+        choices=PaperOrder.TYPE_CHOICES,
+        required=False,
+        default=PaperOrder.TYPE_MARKET,
+    )
+    shares = serializers.DecimalField(max_digits=15, decimal_places=6, min_value=Decimal("0.000001"))
+    trigger_price = serializers.DecimalField(
+        max_digits=15,
+        decimal_places=4,
+        required=False,
+        allow_null=True,
+        min_value=Decimal("0.0001"),
+    )
+    take_profit_price = serializers.DecimalField(
+        max_digits=15,
+        decimal_places=4,
+        required=False,
+        allow_null=True,
+        min_value=Decimal("0.0001"),
+    )
+    stop_loss_price = serializers.DecimalField(
+        max_digits=15,
+        decimal_places=4,
+        required=False,
+        allow_null=True,
+        min_value=Decimal("0.0001"),
+    )
+
+    def validate(self, attrs):
+        order_type = attrs.get("order_type", PaperOrder.TYPE_MARKET)
+        trigger_price = attrs.get("trigger_price")
+        if order_type in {PaperOrder.TYPE_LIMIT, PaperOrder.TYPE_STOP} and trigger_price is None:
+            raise serializers.ValidationError("trigger_price is required for limit/stop orders.")
+        if order_type == PaperOrder.TYPE_MARKET:
+            attrs["trigger_price"] = None
+        return attrs
+
+
+class PaperOrderSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaperOrder
+        fields = (
+            "id",
+            "ticker",
+            "action",
+            "order_type",
+            "shares",
+            "trigger_price",
+            "take_profit_price",
+            "stop_loss_price",
+            "status",
+            "status_message",
+            "filled_price",
+            "filled_at",
+            "trade",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class PortfolioSnapshotSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PortfolioSnapshot
+        fields = ("id", "captured_at", "cash_balance", "market_value", "total_equity")
+        read_only_fields = fields
 
 
 class EconomicEventSerializer(serializers.ModelSerializer):
