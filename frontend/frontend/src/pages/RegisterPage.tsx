@@ -20,7 +20,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
 import { useState } from 'react'
 import { register as apiRegister } from '../services/api'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/useAuth'
 
 type RegisterFormValues = {
   full_name: string

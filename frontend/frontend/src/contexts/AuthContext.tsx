@@ -1,14 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { setAuthToken } from '../services/api'
-
-type AuthContextValue = {
-  isAuthenticated: boolean
-  accessToken: string | null
-  login: (tokens: { access: string; refresh: string }) => void
-  logout: () => void
-}
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined)
+import { AuthContext, type AuthContextValue } from './useAuth'
 
 type AuthProviderProps = {
   children: ReactNode
@@ -28,6 +20,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [accessToken])
 
   const login = (tokens: { access: string; refresh: string }) => {
+    setAuthToken(tokens.access)
     setAccessToken(tokens.access)
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access)
@@ -36,6 +29,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const logout = () => {
+    setAuthToken(null)
     setAccessToken(null)
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(ACCESS_TOKEN_KEY)
@@ -51,13 +45,5 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext)
-  if (!ctx) {
-    throw new Error('useAuth must be used within an AuthProvider')
-  }
-  return ctx
 }
 

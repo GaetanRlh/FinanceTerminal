@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import type { ReactElement } from 'react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/useAuth'
 
 type ProtectedRouteProps = {
   children: ReactElement

@@ -12,6 +12,9 @@ import {
   IconButton,
   Tooltip,
   Stack,
+  MenuItem,
+  TextField,
+  Button,
 } from '@mui/material'
 import StarIcon from '@mui/icons-material/Star'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
@@ -20,7 +23,15 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
-import { getWatchlist, removeFromWatchlist, getQuote, type WatchlistItem, type Quote } from '../services/api'
+import {
+  getWatchlist,
+  getWatchlistCollections,
+  removeFromWatchlist,
+  updateWatchlistItem,
+  getQuote,
+  type WatchlistItem,
+  type Quote,
+} from '../services/api'
 
 type WatchlistItemWithQuote = WatchlistItem & {
   quote: Quote | null
@@ -36,6 +47,12 @@ export function WatchlistPage() {
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
   const [refreshing, setRefreshing] = useState(false)
+  const [collections, setCollections] = useState<Array<{ name: string; count: number; tags: string[] }>>([])
+  const [activeList, setActiveList] = useState('All')
+  const [activeTag, setActiveTag] = useState('All')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editListName, setEditListName] = useState('Default')
+  const [editTags, setEditTags] = useState('')
   const navigate = useNavigate()
 
   const enrichWithQuotes = useCallback(async (watchlistItems: WatchlistItem[]) => {
@@ -65,7 +82,12 @@ export function WatchlistPage() {
     else setRefreshing(true)
     setError(null)
     try {
-      const data = await getWatchlist()
+      const params = {
+        list_name: activeList === 'All' ? undefined : activeList,
+        tag: activeTag === 'All' ? undefined : activeTag,
+      }
+      const [data, listData] = await Promise.all([getWatchlist(params), getWatchlistCollections()])
+      setCollections(listData)
       // Stop the full-page spinner before fetching per-row quotes
       // so the table renders with per-row loading indicators
       if (showLoader) setIsLoading(false)
@@ -76,7 +98,7 @@ export function WatchlistPage() {
       setIsLoading(false)
       setRefreshing(false)
     }
-  }, [enrichWithQuotes])
+  }, [activeList, activeTag, enrichWithQuotes])
 
   useEffect(() => {
     fetchData(true)
@@ -97,6 +119,30 @@ export function WatchlistPage() {
       // silent
     } finally {
       setRemovingId(null)
+    }
+  }
+
+  const startEdit = (item: WatchlistItemWithQuote, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingId(item.id)
+    setEditListName(item.list_name ?? 'Default')
+    setEditTags((item.tags ?? []).join(', '))
+  }
+
+  const saveEdit = async (item: WatchlistItemWithQuote, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await updateWatchlistItem(item.id, {
+        list_name: editListName.trim() || 'Default',
+        tags: editTags
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
+      })
+      await fetchData(false)
+      setEditingId(null)
+    } catch {
+      // silent
     }
   }
 
@@ -156,6 +202,43 @@ export function WatchlistPage() {
         </Box>
       )}
 
+      {!isLoading && (
+        <Paper sx={{ p: 1.2, mb: 2 }}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+            <TextField
+              select
+              size="small"
+              label="Watchlist"
+              value={activeList}
+              onChange={(e) => setActiveList(e.target.value)}
+              sx={{ minWidth: 180 }}
+            >
+              <MenuItem value="All">All</MenuItem>
+              {collections.map((c) => (
+                <MenuItem key={c.name} value={c.name}>
+                  {c.name} ({c.count})
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              size="small"
+              label="Tag"
+              value={activeTag}
+              onChange={(e) => setActiveTag(e.target.value)}
+              sx={{ minWidth: 180 }}
+            >
+              <MenuItem value="All">All</MenuItem>
+              {Array.from(new Set(collections.flatMap((c) => c.tags))).map((tag) => (
+                <MenuItem key={tag} value={tag}>
+                  {tag}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Stack>
+        </Paper>
+      )}
+
       {isLoading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
           <Stack spacing={1.5} alignItems="center">
@@ -191,6 +274,7 @@ export function WatchlistPage() {
                   <TableCell align="right">High</TableCell>
                   <TableCell align="right">Low</TableCell>
                   <TableCell align="right">Volume</TableCell>
+                  <TableCell>List / Tags</TableCell>
                   <TableCell align="center" sx={{ width: 60 }} />
                 </TableRow>
               </TableHead>
@@ -201,7 +285,7 @@ export function WatchlistPage() {
                   const up = cp != null ? cp >= 0 : true
 
                   return (
-                    <TableRow
+                <TableRow
                       key={item.id}
                       hover
                       sx={{ cursor: 'pointer' }}
@@ -257,6 +341,37 @@ export function WatchlistPage() {
                           {q?.volume != null ? Number(q.volume).toLocaleString('en-US', { notation: 'compact' }) : '—'}
                         </Typography>
                       </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {editingId === item.id ? (
+                          <Stack direction="row" spacing={0.75}>
+                            <TextField
+                              size="small"
+                              value={editListName}
+                              onChange={(e) => setEditListName(e.target.value)}
+                              sx={{ maxWidth: 120 }}
+                            />
+                            <TextField
+                              size="small"
+                              value={editTags}
+                              onChange={(e) => setEditTags(e.target.value)}
+                              placeholder="tag1,tag2"
+                              sx={{ maxWidth: 180 }}
+                            />
+                            <Button size="small" onClick={(e) => void saveEdit(item, e)}>
+                              Save
+                            </Button>
+                          </Stack>
+                        ) : (
+                          <Stack spacing={0.4}>
+                            <Typography sx={{ fontSize: '0.72rem', color: 'rgba(224,230,240,0.75)' }}>
+                              {item.list_name ?? 'Default'}
+                            </Typography>
+                            <Typography sx={{ fontSize: '0.68rem', color: 'rgba(224,230,240,0.45)' }}>
+                              {(item.tags ?? []).join(', ') || '-'}
+                            </Typography>
+                          </Stack>
+                        )}
+                      </TableCell>
                       <TableCell align="center" onClick={(e) => e.stopPropagation()}>
                         <Tooltip title="Remove from watchlist">
                           <IconButton
@@ -272,6 +387,11 @@ export function WatchlistPage() {
                             )}
                           </IconButton>
                         </Tooltip>
+                        {editingId !== item.id && (
+                          <Button size="small" onClick={(e) => startEdit(item, e)} sx={{ ml: 0.5 }}>
+                            Edit
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   )

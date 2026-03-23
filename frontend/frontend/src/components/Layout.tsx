@@ -22,8 +22,9 @@ import DashboardIcon from '@mui/icons-material/Dashboard'
 import AccountCircleIcon from '@mui/icons-material/AccountCircle'
 import LogoutIcon from '@mui/icons-material/Logout'
 import ExploreIcon from '@mui/icons-material/Explore'
+import EventNoteIcon from '@mui/icons-material/EventNote'
 import KeyboardCommandKeyIcon from '@mui/icons-material/KeyboardCommandKey'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/useAuth'
 import { CommandPalette } from './CommandPalette'
 import { TickerTape } from './TickerTape'
 import { getQuote } from '../services/api'
@@ -75,7 +76,6 @@ export function Layout({ children }: LayoutProps) {
   const [cmdOpen, setCmdOpen] = useState(false)
   const [tickerItems, setTickerItems] = useState<TickerItem[]>([])
 
-  // Load ticker data
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -103,7 +103,6 @@ export function Layout({ children }: LayoutProps) {
     return () => { cancelled = true }
   }, [])
 
-  // Global keyboard shortcut: Cmd+K or Ctrl+K
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault()
@@ -140,7 +139,6 @@ export function Layout({ children }: LayoutProps) {
         <Toolbar
           sx={{ gap: 1.5, py: 0.75, minHeight: '52px !important' }}
         >
-          {/* Logo */}
           <Typography
             variant="h6"
             component={RouterLink}
@@ -161,7 +159,6 @@ export function Layout({ children }: LayoutProps) {
             FT
           </Typography>
 
-          {/* Nav links */}
           <Stack direction="row" spacing={0} sx={{ display: { xs: 'none', md: 'flex' } }}>
             {[
               { to: '/', label: 'MARKET', icon: <DashboardIcon sx={{ fontSize: 14 }} /> },
@@ -169,6 +166,7 @@ export function Layout({ children }: LayoutProps) {
               ...(isAuthenticated
                 ? [
                     { to: '/watchlist', label: 'WATCHLIST', icon: <StarBorderIcon sx={{ fontSize: 14 }} /> },
+                    { to: '/calendar', label: 'CALENDAR', icon: <EventNoteIcon sx={{ fontSize: 14 }} /> },
                     { to: '/notes', label: 'NOTES', icon: <NoteIcon sx={{ fontSize: 14 }} /> },
                   ]
                 : []),
@@ -202,7 +200,6 @@ export function Layout({ children }: LayoutProps) {
 
           <Box sx={{ flex: 1 }} />
 
-          {/* Search bar */}
           <Box component="form" onSubmit={handleSearch} sx={{ maxWidth: 260, width: '100%' }}>
             <TextField
               size="small"
@@ -228,7 +225,6 @@ export function Layout({ children }: LayoutProps) {
             />
           </Box>
 
-          {/* Cmd+K button */}
           <Tooltip title="Command Palette (⌘K)">
             <IconButton
               size="small"
@@ -247,7 +243,6 @@ export function Layout({ children }: LayoutProps) {
 
           <LiveClock />
 
-          {/* User section */}
           {isAuthenticated ? (
             <>
               <IconButton
@@ -276,6 +271,10 @@ export function Layout({ children }: LayoutProps) {
                 <MenuItem component={RouterLink} to="/notes" onClick={() => setAnchorEl(null)}>
                   <NoteIcon sx={{ mr: 1.5, fontSize: 16, color: 'rgba(0,212,255,0.6)' }} />
                   Notes
+                </MenuItem>
+                <MenuItem component={RouterLink} to="/calendar" onClick={() => setAnchorEl(null)}>
+                  <EventNoteIcon sx={{ mr: 1.5, fontSize: 16, color: 'rgba(0,212,255,0.6)' }} />
+                  Calendar
                 </MenuItem>
                 <MenuItem onClick={handleLogout} sx={{ color: '#ff3366' }}>
                   <LogoutIcon sx={{ mr: 1.5, fontSize: 16 }} />
@@ -308,7 +307,6 @@ export function Layout({ children }: LayoutProps) {
         </Toolbar>
       </AppBar>
 
-      {/* Ticker tape */}
       <TickerTape items={tickerItems.length > 0 ? tickerItems : undefined} />
 
       <Box component="main" sx={{ flexGrow: 1, py: 2.5, px: { xs: 1.5, md: 2.5 } }}>

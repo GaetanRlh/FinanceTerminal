@@ -1,6 +1,15 @@
 from rest_framework import serializers
 
-from .models import Entity, WatchlistItem, Note
+from .models import (
+    Entity,
+    WatchlistItem,
+    Note,
+    EconomicEvent,
+    EarningsEvent,
+    EventReminder,
+    AlertRule,
+    AlertEvent,
+)
 
 
 class EntitySerializer(serializers.ModelSerializer):
@@ -16,11 +25,28 @@ class WatchlistItemSerializer(serializers.ModelSerializer):
         source="entity",
         write_only=True,
     )
+    list_name = serializers.CharField(required=False, allow_blank=False, max_length=80, default="Default")
+    tags = serializers.ListField(
+        child=serializers.CharField(max_length=32),
+        required=False,
+        allow_empty=True,
+        default=list,
+    )
 
     class Meta:
         model = WatchlistItem
-        fields = ("id", "entity", "entity_id", "added_at")
+        fields = ("id", "entity", "entity_id", "list_name", "tags", "added_at")
         read_only_fields = ("id", "added_at")
+
+    def validate_tags(self, value):
+        cleaned = []
+        for tag in value:
+            t = (tag or "").strip()
+            if not t:
+                continue
+            if t not in cleaned:
+                cleaned.append(t)
+        return cleaned
 
 
 class NoteSerializer(serializers.ModelSerializer):
@@ -37,4 +63,97 @@ class NoteSerializer(serializers.ModelSerializer):
         model = Note
         fields = ("id", "entity", "entity_id", "titre", "contenu", "created_at")
         read_only_fields = ("id", "created_at", "entity")
+
+
+class EconomicEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EconomicEvent
+        fields = ("id", "title", "event_type", "scheduled_at", "country", "currency", "importance", "source_url")
+        read_only_fields = fields
+
+
+class EarningsEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EarningsEvent
+        fields = ("id", "ticker", "company_name", "scheduled_at", "session", "source_url")
+        read_only_fields = fields
+
+
+class EventReminderSerializer(serializers.ModelSerializer):
+    economic_event = EconomicEventSerializer(read_only=True)
+    earnings_event = EarningsEventSerializer(read_only=True)
+    economic_event_id = serializers.PrimaryKeyRelatedField(
+        queryset=EconomicEvent.objects.all(),
+        source="economic_event",
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    earnings_event_id = serializers.PrimaryKeyRelatedField(
+        queryset=EarningsEvent.objects.all(),
+        source="earnings_event",
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = EventReminder
+        fields = (
+            "id",
+            "economic_event",
+            "earnings_event",
+            "economic_event_id",
+            "earnings_event_id",
+            "offset_minutes",
+            "enabled",
+            "created_at",
+        )
+        read_only_fields = ("id", "created_at", "economic_event", "earnings_event")
+
+    def validate(self, attrs):
+        economic_event = attrs.get("economic_event")
+        earnings_event = attrs.get("earnings_event")
+        if bool(economic_event) == bool(earnings_event):
+            raise serializers.ValidationError("Provide exactly one of economic_event_id or earnings_event_id.")
+        return attrs
+
+
+class AlertRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AlertRule
+        fields = (
+            "id",
+            "name",
+            "rule_type",
+            "symbol",
+            "threshold",
+            "enabled",
+            "last_triggered_at",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "last_triggered_at", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        rule_type = attrs.get("rule_type") or getattr(self.instance, "rule_type", None)
+        symbol = (attrs.get("symbol") or getattr(self.instance, "symbol", "") or "").strip().upper()
+        if rule_type in {
+            AlertRule.TYPE_PRICE_ABOVE,
+            AlertRule.TYPE_PRICE_BELOW,
+            AlertRule.TYPE_MOVE_UP_PCT,
+            AlertRule.TYPE_MOVE_DOWN_PCT,
+        } and not symbol:
+            raise serializers.ValidationError("A symbol is required for symbol-based rules.")
+        attrs["symbol"] = symbol
+        return attrs
+
+
+class AlertEventSerializer(serializers.ModelSerializer):
+    rule = AlertRuleSerializer(read_only=True)
+
+    class Meta:
+        model = AlertEvent
+        fields = ("id", "rule", "message", "severity", "payload", "acknowledged", "created_at")
+        read_only_fields = ("id", "rule", "message", "severity", "payload", "created_at")
 

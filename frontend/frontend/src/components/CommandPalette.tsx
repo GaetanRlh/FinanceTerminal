@@ -7,7 +7,7 @@ import {
   Typography,
   Divider,
 } from '@mui/material'
-import { useEffect, useState, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SearchIcon from '@mui/icons-material/Search'
 import DashboardIcon from '@mui/icons-material/Dashboard'
@@ -15,6 +15,7 @@ import StarBorderIcon from '@mui/icons-material/StarBorder'
 import NoteIcon from '@mui/icons-material/Note'
 import ExploreIcon from '@mui/icons-material/Explore'
 import TrendingUpIcon from '@mui/icons-material/TrendingUp'
+import EventNoteIcon from '@mui/icons-material/EventNote'
 import KeyboardReturnIcon from '@mui/icons-material/KeyboardReturn'
 
 type Action = {
@@ -36,13 +37,18 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState(0)
   const navigate = useNavigate()
+  const closePalette = useCallback(() => {
+    setQuery('')
+    setSelectedIdx(0)
+    onClose()
+  }, [onClose])
 
   const go = useCallback(
     (path: string) => {
       navigate(path)
-      onClose()
+      closePalette()
     },
-    [navigate, onClose]
+    [closePalette, navigate]
   )
 
   const baseActions: Action[] = [
@@ -74,6 +80,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       category: 'Navigate',
     },
     {
+      id: 'calendar',
+      label: 'Calendar',
+      description: 'Earnings and macro events',
+      icon: <EventNoteIcon sx={{ fontSize: 16 }} />,
+      shortcut: 'G C',
+      action: () => go('/calendar'),
+      category: 'Navigate',
+    },
+    {
       id: 'notes',
       label: 'Notes',
       description: 'My analysis notes',
@@ -82,14 +97,14 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       action: () => go('/notes'),
       category: 'Navigate',
     },
-      ]
+  ]
 
   const searchAction: Action | null =
     query.trim().length >= 1
       ? {
           id: 'search',
           label: `Search "${query.trim()}"`,
-          description: 'Search entities via Alpha Vantage',
+          description: 'Search for a stock, ETF, or index',
           icon: <SearchIcon sx={{ fontSize: 16 }} />,
           action: () => go(`/entities?q=${encodeURIComponent(query.trim())}`),
           category: 'Search',
@@ -119,14 +134,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     ),
   ]
 
-  useEffect(() => {
-    setSelectedIdx(0)
-  }, [query])
-
-  useEffect(() => {
-    if (!open) setQuery('')
-  }, [open])
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -138,7 +145,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       e.preventDefault()
       filtered[selectedIdx]?.action()
     } else if (e.key === 'Escape') {
-      onClose()
+      closePalette()
     }
   }
 
@@ -147,7 +154,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={closePalette}
       PaperProps={{
         sx: {
           bgcolor: '#070d1a',
@@ -167,7 +174,10 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           autoFocus
           fullWidth
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setSelectedIdx(0)
+          }}
           onKeyDown={handleKeyDown}
           placeholder="Search, navigate, or type a symbol..."
           sx={{

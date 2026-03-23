@@ -20,11 +20,13 @@ class Entity(models.Model):
 class WatchlistItem(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="watchlist")
     entity = models.ForeignKey(Entity, on_delete=models.CASCADE, related_name="watchers")
+    list_name = models.CharField(max_length=80, default="Default")
+    tags = models.JSONField(default=list, blank=True)
     added_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         verbose_name = "élément watchlist"
-        unique_together = ("user", "entity")
+        unique_together = ("user", "entity", "list_name")
         ordering = ["-added_at"]
 
     def __str__(self):
@@ -50,3 +52,151 @@ class Note(models.Model):
     def __str__(self):
         return self.titre
 
+
+class EconomicEvent(models.Model):
+    EVENT_FOMC = "FOMC"
+    EVENT_CPI = "CPI"
+    EVENT_NFP = "NFP"
+    EVENT_GDP = "GDP"
+    EVENT_PMI = "PMI"
+    EVENT_OTHER = "OTHER"
+    EVENT_CHOICES = [
+        (EVENT_FOMC, "FOMC"),
+        (EVENT_CPI, "CPI"),
+        (EVENT_NFP, "NFP"),
+        (EVENT_GDP, "GDP"),
+        (EVENT_PMI, "PMI"),
+        (EVENT_OTHER, "Other"),
+    ]
+
+    IMPORTANCE_HIGH = "HIGH"
+    IMPORTANCE_MEDIUM = "MEDIUM"
+    IMPORTANCE_LOW = "LOW"
+    IMPORTANCE_CHOICES = [
+        (IMPORTANCE_HIGH, "High"),
+        (IMPORTANCE_MEDIUM, "Medium"),
+        (IMPORTANCE_LOW, "Low"),
+    ]
+
+    title = models.CharField(max_length=255)
+    event_type = models.CharField(max_length=12, choices=EVENT_CHOICES, default=EVENT_OTHER)
+    scheduled_at = models.DateTimeField()
+    country = models.CharField(max_length=64, default="US")
+    currency = models.CharField(max_length=8, default="USD")
+    importance = models.CharField(max_length=10, choices=IMPORTANCE_CHOICES, default=IMPORTANCE_MEDIUM)
+    source_url = models.URLField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["scheduled_at"]
+
+
+class EarningsEvent(models.Model):
+    SESSION_PRE = "PRE_MARKET"
+    SESSION_POST = "POST_MARKET"
+    SESSION_DURING = "DURING_MARKET"
+    SESSION_TBD = "TBD"
+    SESSION_CHOICES = [
+        (SESSION_PRE, "Pre-market"),
+        (SESSION_POST, "Post-market"),
+        (SESSION_DURING, "During market"),
+        (SESSION_TBD, "TBD"),
+    ]
+
+    ticker = models.CharField(max_length=20, db_index=True)
+    company_name = models.CharField(max_length=255, blank=True)
+    scheduled_at = models.DateTimeField()
+    session = models.CharField(max_length=20, choices=SESSION_CHOICES, default=SESSION_TBD)
+    source_url = models.URLField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["scheduled_at", "ticker"]
+        unique_together = ("ticker", "scheduled_at")
+
+
+class EventReminder(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="event_reminders")
+    economic_event = models.ForeignKey(
+        EconomicEvent,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reminders",
+    )
+    earnings_event = models.ForeignKey(
+        EarningsEvent,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reminders",
+    )
+    offset_minutes = models.PositiveIntegerField(default=60)
+    enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    (models.Q(economic_event__isnull=False) & models.Q(earnings_event__isnull=True))
+                    | (models.Q(economic_event__isnull=True) & models.Q(earnings_event__isnull=False))
+                ),
+                name="event_reminder_one_event_only",
+            )
+        ]
+
+
+class AlertRule(models.Model):
+    TYPE_PRICE_ABOVE = "PRICE_ABOVE"
+    TYPE_PRICE_BELOW = "PRICE_BELOW"
+    TYPE_MOVE_UP_PCT = "MOVE_UP_PCT"
+    TYPE_MOVE_DOWN_PCT = "MOVE_DOWN_PCT"
+    TYPE_EVENT_SOON_MINUTES = "EVENT_SOON_MINUTES"
+    TYPE_CHOICES = [
+        (TYPE_PRICE_ABOVE, "Price Above"),
+        (TYPE_PRICE_BELOW, "Price Below"),
+        (TYPE_MOVE_UP_PCT, "Move Up (%)"),
+        (TYPE_MOVE_DOWN_PCT, "Move Down (%)"),
+        (TYPE_EVENT_SOON_MINUTES, "Event Soon (minutes)"),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="alert_rules")
+    name = models.CharField(max_length=120)
+    rule_type = models.CharField(max_length=32, choices=TYPE_CHOICES)
+    symbol = models.CharField(max_length=20, blank=True)
+    threshold = models.DecimalField(max_digits=15, decimal_places=4)
+    enabled = models.BooleanField(default=True)
+    last_triggered_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.rule_type}:{self.symbol or 'PORTFOLIO'}"
+
+
+class AlertEvent(models.Model):
+    SEVERITY_INFO = "INFO"
+    SEVERITY_WARNING = "WARNING"
+    SEVERITY_CRITICAL = "CRITICAL"
+    SEVERITY_CHOICES = [
+        (SEVERITY_INFO, "Info"),
+        (SEVERITY_WARNING, "Warning"),
+        (SEVERITY_CRITICAL, "Critical"),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="alert_events")
+    rule = models.ForeignKey(AlertRule, on_delete=models.SET_NULL, null=True, blank=True, related_name="events")
+    message = models.CharField(max_length=255)
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default=SEVERITY_INFO)
+    payload = models.JSONField(default=dict, blank=True)
+    acknowledged = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]

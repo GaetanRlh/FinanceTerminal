@@ -7,10 +7,19 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-dev-fallback")
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "django-insecure-dev-fallback"
+    else:
+        raise RuntimeError("SECRET_KEY must be set when DEBUG is False.")
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if host.strip()
+]
 
 # ── Apps ────────────────────────────────────────────────────────────
 
@@ -110,8 +119,9 @@ SIMPLE_JWT = {
 # ── CORS ────────────────────────────────────────────────────────────
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
 ]
 
 # ── Alpha Vantage ───────────────────────────────────────────────────

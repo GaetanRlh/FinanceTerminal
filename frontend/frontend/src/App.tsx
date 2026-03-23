@@ -6,6 +6,7 @@ import { RegisterPage } from './pages/RegisterPage'
 import { EntitiesPage } from './pages/EntitiesPage'
 import { WatchlistPage } from './pages/WatchlistPage'
 import { NotesPage } from './pages/NotesPage'
+import { CalendarPage } from './pages/CalendarPage'
 import { EntityDetailPage } from './pages/EntityDetailPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { AuthProvider } from './contexts/AuthContext'
@@ -26,6 +27,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <WatchlistPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/calendar"
+            element={
+              <ProtectedRoute>
+                <CalendarPage />
               </ProtectedRoute>
             }
           />

@@ -1,7 +1,9 @@
 import axios from 'axios'
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api'
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: API_BASE_URL,
 })
 
 export function setAuthToken(token: string | null) {
@@ -31,7 +33,7 @@ api.interceptors.response.use(
 
       if (refresh) {
         try {
-          const res = await axios.post('http://localhost:8000/api/auth/token/refresh/', { refresh })
+          const res = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, { refresh })
           const newAccess: string = res.data.access
           localStorage.setItem('rt_access_token', newAccess)
           api.defaults.headers.common.Authorization = `Bearer ${newAccess}`
@@ -50,8 +52,6 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
-
-// ── Auth ─────────────────────────────────────────────────────────────
 
 type LoginResponse = {
   access: string
@@ -84,8 +84,6 @@ export async function register(payload: {
 export async function requestPasswordReset(email: string): Promise<void> {
   await api.post('/auth/password-reset/', { email })
 }
-
-// ── Market / Alpha Vantage helpers ───────────────────────────────────
 
 export type SearchResult = {
   symbol: string
@@ -136,6 +134,20 @@ export type CompanyOverview = {
   RevenuePerShareTTM: string
   ProfitMargin: string
   EVToEBITDA: string
+  ForwardPE?: string
+  PEGRatio?: string
+  PriceToBookRatio?: string
+  PriceToSalesRatioTTM?: string
+  '50DayMovingAverage'?: string
+  '200DayMovingAverage'?: string
+  ReturnOnEquityTTM?: string
+  ReturnOnAssetsTTM?: string
+  OperatingMarginTTM?: string
+  SharesOutstanding?: string
+  EnterpriseValue?: string
+  EnterpriseToRevenue?: string
+  QuarterlyEarningsGrowthYOY?: string
+  QuarterlyRevenueGrowthYOY?: string
 }
 
 export type NewsArticle = {
@@ -273,8 +285,6 @@ export async function getMarketStatus(): Promise<MarketStatusEntry[]> {
   }
 }
 
-// ── Entities, Watchlist, Notes ───────────────────────────────────────────
-
 export type Entity = {
   id: number
   nom: string
@@ -286,6 +296,8 @@ export type Entity = {
 export type WatchlistItem = {
   id: number
   entity: Entity
+  list_name?: string
+  tags?: string[]
   added_at: string
 }
 
@@ -295,6 +307,80 @@ export type NoteItem = {
   entity_id?: number
   titre: string
   contenu: string
+  created_at: string
+}
+
+export type EntityContextData = {
+  symbol: string
+  overview: CompanyOverview
+  peers: Array<{
+    symbol: string
+    name: string
+    price: string | null
+    change_percent: string
+    market_cap: string
+  }>
+  earnings_history: Array<{
+    date: string
+    eps_estimate: string | null
+    eps_actual: string | null
+    surprise_pct: string | null
+  }>
+}
+
+export type EconomicEvent = {
+  id: number
+  title: string
+  event_type: 'FOMC' | 'CPI' | 'NFP' | 'GDP' | 'PMI' | 'OTHER'
+  scheduled_at: string
+  country: string
+  currency: string
+  importance: 'HIGH' | 'MEDIUM' | 'LOW'
+  source_url?: string
+}
+
+export type EarningsEvent = {
+  id: number
+  ticker: string
+  company_name: string
+  scheduled_at: string
+  session: 'PRE_MARKET' | 'POST_MARKET' | 'DURING_MARKET' | 'TBD'
+  source_url?: string
+}
+
+export type EventReminder = {
+  id: number
+  economic_event: EconomicEvent | null
+  earnings_event: EarningsEvent | null
+  offset_minutes: number
+  enabled: boolean
+  created_at: string
+}
+
+export type AlertRule = {
+  id: number
+  name: string
+  rule_type:
+    | 'PRICE_ABOVE'
+    | 'PRICE_BELOW'
+    | 'MOVE_UP_PCT'
+    | 'MOVE_DOWN_PCT'
+    | 'EVENT_SOON_MINUTES'
+  symbol: string
+  threshold: string
+  enabled: boolean
+  last_triggered_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type AlertEvent = {
+  id: number
+  rule: AlertRule | null
+  message: string
+  severity: 'INFO' | 'WARNING' | 'CRITICAL'
+  payload: Record<string, unknown>
+  acknowledged: boolean
   created_at: string
 }
 
@@ -318,14 +404,31 @@ export async function createEntity(data: {
   return response.data as Entity
 }
 
-export async function getWatchlist(): Promise<WatchlistItem[]> {
-  const response = await api.get('/market/watchlist/')
+export async function getWatchlist(params?: { list_name?: string; tag?: string }): Promise<WatchlistItem[]> {
+  const response = await api.get('/market/watchlist/', { params })
   return response.data as WatchlistItem[]
 }
 
-export async function addToWatchlist(entityId: number): Promise<WatchlistItem> {
-  const response = await api.post('/market/watchlist/', { entity_id: entityId })
+export async function addToWatchlist(entityId: number, options?: { list_name?: string; tags?: string[] }): Promise<WatchlistItem> {
+  const response = await api.post('/market/watchlist/', {
+    entity_id: entityId,
+    list_name: options?.list_name,
+    tags: options?.tags,
+  })
   return response.data as WatchlistItem
+}
+
+export async function updateWatchlistItem(
+  id: number,
+  payload: Partial<Pick<WatchlistItem, 'list_name' | 'tags'>>
+): Promise<WatchlistItem> {
+  const response = await api.patch(`/market/watchlist/${id}/`, payload)
+  return response.data as WatchlistItem
+}
+
+export async function getWatchlistCollections(): Promise<Array<{ name: string; count: number; tags: string[] }>> {
+  const response = await api.get('/market/watchlist/lists/')
+  return response.data as Array<{ name: string; count: number; tags: string[] }>
 }
 
 export async function removeFromWatchlist(watchlistItemId: number): Promise<void> {
@@ -353,6 +456,92 @@ export async function updateNote(id: number, data: { titre?: string; contenu?: s
 
 export async function deleteNote(id: number): Promise<void> {
   await api.delete(`/market/notes/${id}/`)
+}
+
+export async function getEntityContext(symbol: string): Promise<EntityContextData> {
+  const response = await api.get('/market/entity-context/', { params: { symbol } })
+  return response.data as EntityContextData
+}
+
+export async function getEconomicEvents(params?: {
+  from?: string
+  to?: string
+  importance?: 'HIGH' | 'MEDIUM' | 'LOW'
+  currency?: string
+}): Promise<EconomicEvent[]> {
+  const response = await api.get('/market/calendar/economic/', { params })
+  return response.data as EconomicEvent[]
+}
+
+export async function getEarningsEvents(params?: {
+  from?: string
+  to?: string
+  watchlist_only?: boolean
+}): Promise<EarningsEvent[]> {
+  const response = await api.get('/market/calendar/earnings/', { params })
+  return response.data as EarningsEvent[]
+}
+
+export async function getEventReminders(): Promise<EventReminder[]> {
+  const response = await api.get('/market/calendar/reminders/')
+  return response.data as EventReminder[]
+}
+
+export async function createEventReminder(payload: {
+  economic_event_id?: number
+  earnings_event_id?: number
+  offset_minutes: number
+  enabled?: boolean
+}): Promise<EventReminder> {
+  const response = await api.post('/market/calendar/reminders/', payload)
+  return response.data as EventReminder
+}
+
+export async function deleteEventReminder(id: number): Promise<void> {
+  await api.delete(`/market/calendar/reminders/${id}/`)
+}
+
+export async function getAlertRules(): Promise<AlertRule[]> {
+  const response = await api.get('/market/alerts/rules/')
+  return response.data as AlertRule[]
+}
+
+export async function createAlertRule(payload: {
+  name: string
+  rule_type: AlertRule['rule_type']
+  symbol?: string
+  threshold: number
+  enabled?: boolean
+}): Promise<AlertRule> {
+  const response = await api.post('/market/alerts/rules/', payload)
+  return response.data as AlertRule
+}
+
+export async function updateAlertRule(
+  id: number,
+  payload: Partial<Pick<AlertRule, 'name' | 'symbol' | 'threshold' | 'enabled'>>
+): Promise<AlertRule> {
+  const response = await api.patch(`/market/alerts/rules/${id}/`, payload)
+  return response.data as AlertRule
+}
+
+export async function deleteAlertRule(id: number): Promise<void> {
+  await api.delete(`/market/alerts/rules/${id}/`)
+}
+
+export async function getAlertEvents(params?: { acknowledged?: boolean }): Promise<AlertEvent[]> {
+  const response = await api.get('/market/alerts/events/', { params })
+  return response.data as AlertEvent[]
+}
+
+export async function acknowledgeAlertEvent(id: number, acknowledged: boolean): Promise<AlertEvent> {
+  const response = await api.patch(`/market/alerts/events/${id}/`, { acknowledged })
+  return response.data as AlertEvent
+}
+
+export async function evaluateAlertRules(): Promise<{ created: number; unacknowledged: number }> {
+  const response = await api.post('/market/alerts/evaluate/')
+  return response.data as { created: number; unacknowledged: number }
 }
 
 

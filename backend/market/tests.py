@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from .models import Entity, WatchlistItem, Note
+from .models import Entity, WatchlistItem, Note, AlertRule, AlertEvent
 
 User = get_user_model()
 
@@ -167,6 +167,19 @@ class WatchlistViewSetTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(WatchlistItem.objects.filter(user=self.user, entity=self.entity).count(), 1)
 
+    def test_add_to_named_watchlist_and_list_collections(self):
+        response = self.client.post(
+            "/api/market/watchlist/",
+            {"entity_id": self.entity.id, "list_name": "Tech Growth", "tags": ["core", "ai"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.json()["list_name"], "Tech Growth")
+        self.assertEqual(response.json()["tags"], ["core", "ai"])
+        collections = self.client.get("/api/market/watchlist/lists/")
+        self.assertEqual(collections.status_code, status.HTTP_200_OK)
+        self.assertTrue(any(item["name"] == "Tech Growth" for item in collections.json()))
+
     def test_remove_from_watchlist(self):
         item = WatchlistItem.objects.create(user=self.user, entity=self.entity)
         response = self.client.delete(f"/api/market/watchlist/{item.id}/")
@@ -195,3 +208,86 @@ class NoteViewSetTests(APITestCase):
         self.client.logout()
         response = self.client.get("/api/market/notes/")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class AlertEngineTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(email="alerts@example.com", password="testpass123", full_name="Alerts User")
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_create_alert_rule(self):
+        response = self.client.post(
+            "/api/market/alerts/rules/",
+            {
+                "name": "AAPL above 100",
+                "rule_type": "PRICE_ABOVE",
+                "symbol": "AAPL",
+                "threshold": "100",
+                "enabled": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(AlertRule.objects.filter(user=self.user).count(), 1)
+
+    @patch("market.views.AlphaVantageClient")
+    def test_evaluate_alert_creates_event(self, mock_client_class):
+        mock_client_class.return_value.global_quote.return_value = {
+            "Global Quote": {"01. symbol": "AAPL", "05. price": "150.00", "08. previous close": "140.00"}
+        }
+        AlertRule.objects.create(
+            user=self.user,
+            name="AAPL above 100",
+            rule_type=AlertRule.TYPE_PRICE_ABOVE,
+            symbol="AAPL",
+            threshold="100",
+            enabled=True,
+        )
+        response = self.client.post("/api/market/alerts/evaluate/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(AlertEvent.objects.filter(user=self.user).count(), 1)
+
+    def test_patch_alert_acknowledged(self):
+        rule = AlertRule.objects.create(
+            user=self.user,
+            name="Event soon",
+            rule_type=AlertRule.TYPE_EVENT_SOON_MINUTES,
+            symbol="",
+            threshold="60",
+            enabled=True,
+        )
+        event = AlertEvent.objects.create(
+            user=self.user,
+            rule=rule,
+            message="Test alert message",
+            severity=AlertEvent.SEVERITY_CRITICAL,
+        )
+        response = self.client.patch(f"/api/market/alerts/events/{event.id}/", {"acknowledged": True}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        event.refresh_from_db()
+        self.assertTrue(event.acknowledged)
+
+
+class EntityContextViewTests(APITestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    @patch("market.views.AlphaVantageClient.global_quote")
+    @patch("market.views.YFinanceClient.company_overview")
+    def test_entity_context(self, mock_overview, mock_quote):
+        def overview_side(symbol):
+            return {
+                "Symbol": symbol,
+                "Name": symbol,
+                "Sector": "Technology",
+                "MarketCapitalization": "500000000000",
+            }
+
+        mock_overview.side_effect = overview_side
+        mock_quote.return_value = {"Global Quote": {"05. price": "100.00", "10. change percent": "0.50%"}}
+        res = self.client.get("/api/market/entity-context/", {"symbol": "AAPL"})
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        payload = res.json()
+        self.assertIn("peers", payload)
+        self.assertIn("earnings_history", payload)

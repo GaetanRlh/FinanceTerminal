@@ -15,6 +15,7 @@ import {
   Typography,
   Chip,
   Stack,
+  MenuItem,
 } from '@mui/material'
 import SearchIcon from '@mui/icons-material/Search'
 import StarIcon from '@mui/icons-material/Star'
@@ -24,7 +25,7 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/useAuth'
 import {
   searchEntities,
   getEntities,
@@ -32,6 +33,7 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   createEntity,
+  getWatchlistCollections,
   type SearchResult,
   type WatchlistItem,
 } from '../services/api'
@@ -48,6 +50,8 @@ export function EntitiesPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [watchlistToggling, setWatchlistToggling] = useState<string | null>(null)
+  const [targetList, setTargetList] = useState('Default')
+  const [collections, setCollections] = useState<Array<{ name: string; count: number; tags: string[] }>>([])
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
 
@@ -56,7 +60,7 @@ export function EntitiesPage() {
   useEffect(() => {
     const q = searchParams.get('q') ?? ''
     if (q !== query) setQuery(q)
-  }, [searchParams])
+  }, [query, searchParams])
 
   useEffect(() => {
     if (debouncedQuery.trim().length < 2) {
@@ -104,10 +108,11 @@ export function EntitiesPage() {
     let cancelled = false
     const fetchAuth = async () => {
       try {
-        const [entitiesRes, watchlistRes] = await Promise.all([getEntities(), getWatchlist()])
+        const [entitiesRes, watchlistRes, listRes] = await Promise.all([getEntities(), getWatchlist(), getWatchlistCollections()])
         if (!cancelled) {
           setDjangoEntities(entitiesRes.map((e) => ({ id: e.id, ticker: e.ticker })))
           setWatchlist(watchlistRes)
+          setCollections(listRes)
         }
       } catch {
         // silent
@@ -140,7 +145,7 @@ export function EntitiesPage() {
         await removeFromWatchlist(wl.id)
         setWatchlist((prev) => prev.filter((w) => w.id !== wl.id))
       } else {
-        const added = await addToWatchlist(entityId)
+        const added = await addToWatchlist(entityId, { list_name: targetList })
         setWatchlist((prev) => [added, ...prev])
       }
     } catch {
@@ -203,7 +208,7 @@ export function EntitiesPage() {
                 label={sym}
                 size="small"
                 icon={<TrendingUpIcon sx={{ fontSize: '12px !important' }} />}
-                onClick={() => setQuery(sym)}
+                onClick={() => navigate(`/entities/${encodeURIComponent(sym)}`)}
                 sx={{
                   fontFamily: '"JetBrains Mono", monospace',
                   fontSize: '0.7rem',
@@ -220,6 +225,26 @@ export function EntitiesPage() {
               />
             ))}
           </Stack>
+        </Box>
+      )}
+
+      {isAuthenticated && (
+        <Box sx={{ mb: 2 }}>
+          <TextField
+            select
+            size="small"
+            label="Add to list"
+            value={targetList}
+            onChange={(e) => setTargetList(e.target.value)}
+            sx={{ minWidth: 220 }}
+          >
+            <MenuItem value="Default">Default</MenuItem>
+            {collections.map((c) => (
+              <MenuItem key={c.name} value={c.name}>
+                {c.name}
+              </MenuItem>
+            ))}
+          </TextField>
         </Box>
       )}
 

@@ -32,7 +32,7 @@ import ArticleIcon from '@mui/icons-material/Article'
 import InfoIcon from '@mui/icons-material/Info'
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link as RouterLink } from 'react-router-dom'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth } from '../contexts/useAuth'
 import {
   getQuote,
   getTimeSeries,
@@ -46,12 +46,14 @@ import {
   updateNote,
   deleteNote,
   getCompanyOverview,
+  getEntityContext,
   getNews,
   type Quote,
   type TimeSeriesPoint,
   type NoteItem,
   type CompanyOverview,
   type NewsArticle,
+  type EntityContextData,
 } from '../services/api'
 import { PortfolioLineChart, type ChartPoint } from '../components/charts/PortfolioLineChart'
 import { PageHeader } from '../components/PageHeader'
@@ -135,6 +137,7 @@ export function EntityDetailPage() {
   const [series, setSeries] = useState<TimeSeriesPoint[]>([])
   const [overview, setOverview] = useState<CompanyOverview | null>(null)
   const [news, setNews] = useState<NewsArticle[]>([])
+  const [entityContext, setEntityContext] = useState<EntityContextData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [period, setPeriod] = useState('3M')
@@ -158,16 +161,18 @@ export function EntityDetailPage() {
     setIsLoading(true)
     setError(null)
     try {
-      const [q, s, ov, newsRes] = await Promise.all([
+      const [q, s, ov, newsRes, ctx] = await Promise.all([
         getQuote(decodedSymbol),
         getTimeSeries(decodedSymbol, 'ALL'),
         getCompanyOverview(decodedSymbol),
         getNews(decodedSymbol, 8),
+        getEntityContext(decodedSymbol).catch(() => null),
       ])
       setQuote(q)
       setSeries(s)
       setOverview(ov)
       setNews(newsRes)
+      setEntityContext(ctx)
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
       const data = (err as { response?: { data?: { error?: string } } })?.response?.data
@@ -194,7 +199,7 @@ export function EntityDetailPage() {
     let cancelled = false
     const ensureAndFetch = async () => {
       try {
-        const entities = await getEntities()
+        const entities = await getEntities({ ticker: quote.symbol })
         const existing = entities.find((e) => e.ticker === quote.symbol)
         let id = existing?.id
         if (!id) {
@@ -222,7 +227,11 @@ export function EntityDetailPage() {
   }, [isAuthenticated, quote, overview])
 
   const handleToggleWatchlist = async () => {
-    if (!isAuthenticated || !entityId) return
+    if (!isAuthenticated) return
+    if (!entityId) {
+      setWatchlistError('Entity is still loading. Please try again in a moment.')
+      return
+    }
     setWatchlistLoading(true)
     setWatchlistError(null)
     try {
@@ -243,7 +252,11 @@ export function EntityDetailPage() {
   }
 
   const handleAddNote = async () => {
-    if (!entityId || !newNoteContent.trim()) return
+    if (!newNoteContent.trim()) return
+    if (!entityId) {
+      setNotesError('Entity is still loading. Please wait and try again.')
+      return
+    }
     setNotesError(null)
     try {
       const created = await createNote({
@@ -478,6 +491,7 @@ export function EntityDetailPage() {
           {/* FUNDAMENTALS TAB */}
           {activeTab === 'fundamentals' && (
             overview ? (
+              <>
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' }, gap: 2 }}>
                 {[
                   {
@@ -497,8 +511,12 @@ export function EntityDetailPage() {
                       { label: '52W High', value: overview['52WeekHigh'] ? `$${parseFloat(overview['52WeekHigh']).toFixed(2)}` : null, highlight: true },
                       { label: '52W Low', value: overview['52WeekLow'] ? `$${parseFloat(overview['52WeekLow']).toFixed(2)}` : null },
                       { label: 'Analyst Target', value: overview.AnalystTargetPrice ? `$${parseFloat(overview.AnalystTargetPrice).toFixed(2)}` : null },
+                      { label: 'Forward P/E', value: overview.ForwardPE ?? null },
+                      { label: 'PEG Ratio', value: overview.PEGRatio ?? null },
+                      { label: 'Price/Book', value: overview.PriceToBookRatio ?? null },
                       { label: 'Dividend Yield', value: overview.DividendYield && overview.DividendYield !== 'None' ? `${parseFloat(overview.DividendYield).toFixed(2)}%` : null },
                       { label: 'Profit Margin', value: overview.ProfitMargin && overview.ProfitMargin !== 'None' ? `${(parseFloat(overview.ProfitMargin) * 100).toFixed(2)}%` : null },
+                      { label: 'Operating Margin', value: overview.OperatingMarginTTM && overview.OperatingMarginTTM !== 'None' ? `${(parseFloat(overview.OperatingMarginTTM) * 100).toFixed(2)}%` : null },
                     ],
                   },
                   {
@@ -526,6 +544,59 @@ export function EntityDetailPage() {
                   </Box>
                 ))}
               </Box>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2, mt: 2 }}>
+                <Paper variant="outlined" sx={{ p: 1.2 }}>
+                  <Typography sx={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.1em', color: 'rgba(0,212,255,0.5)', fontFamily: '"JetBrains Mono", monospace', mb: 1 }}>
+                    ▸ PEER COMPARISON
+                  </Typography>
+                  <Stack spacing={0.75}>
+                    {(entityContext?.peers ?? []).map((peer) => (
+                      <Box key={peer.symbol} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
+                        <Box>
+                          <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.76rem', color: '#e0e6f0' }}>
+                            {peer.symbol} - {peer.name}
+                          </Typography>
+                          <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.65rem', color: 'rgba(224,230,240,0.35)' }}>
+                            Mkt Cap: {formatMarketCap(String(peer.market_cap))}
+                          </Typography>
+                        </Box>
+                        <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.74rem', color: '#00d4ff' }}>
+                          {peer.price ? `$${Number(peer.price).toFixed(2)}` : '-'} {peer.change_percent ? `(${peer.change_percent})` : ''}
+                        </Typography>
+                      </Box>
+                    ))}
+                    {(entityContext?.peers?.length ?? 0) === 0 && (
+                      <Typography sx={{ fontSize: '0.75rem', color: 'rgba(224,230,240,0.35)' }}>
+                        No peer data available.
+                      </Typography>
+                    )}
+                  </Stack>
+                </Paper>
+
+                <Paper variant="outlined" sx={{ p: 1.2 }}>
+                  <Typography sx={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.1em', color: 'rgba(0,212,255,0.5)', fontFamily: '"JetBrains Mono", monospace', mb: 1 }}>
+                    ▸ EARNINGS HISTORY
+                  </Typography>
+                  <Stack spacing={0.75}>
+                    {(entityContext?.earnings_history ?? []).map((ev, idx) => (
+                      <Box key={`${ev.date}-${idx}`} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1 }}>
+                        <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.73rem', color: 'rgba(224,230,240,0.75)' }}>
+                          {new Date(ev.date).toLocaleDateString()}
+                        </Typography>
+                        <Typography sx={{ fontFamily: '"JetBrains Mono", monospace', fontSize: '0.73rem', color: 'rgba(224,230,240,0.65)' }}>
+                          Est: {ev.eps_estimate ?? '-'} | Actual: {ev.eps_actual ?? '-'} | Surprise: {ev.surprise_pct ? `${Number(ev.surprise_pct).toFixed(2)}%` : '-'}
+                        </Typography>
+                      </Box>
+                    ))}
+                    {(entityContext?.earnings_history?.length ?? 0) === 0 && (
+                      <Typography sx={{ fontSize: '0.75rem', color: 'rgba(224,230,240,0.35)' }}>
+                        No earnings history available.
+                      </Typography>
+                    )}
+                  </Stack>
+                </Paper>
+              </Box>
+              </>
             ) : (
               <Box sx={{ py: 4, textAlign: 'center' }}>
                 <Typography sx={{ color: 'rgba(224,230,240,0.3)', fontFamily: '"JetBrains Mono", monospace', fontSize: '0.78rem' }}>

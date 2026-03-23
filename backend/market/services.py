@@ -1,8 +1,3 @@
-"""
-Market data services — backed by yfinance (Yahoo Finance).
-No API key required, generous rate limits, free forever.
-Alpha Vantage is kept only for symbol search.
-"""
 from __future__ import annotations
 
 import datetime
@@ -14,18 +9,6 @@ import yfinance as yf
 from django.conf import settings
 from django.core.cache import cache
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-
-
-def check_av_error(data: dict) -> str | None:
-    if "Error Message" in data:
-        return data["Error Message"]
-    if "Note" in data:
-        return data["Note"]
-    if "Information" in data:
-        return data["Information"]
-    return None
-
 
 def _safe_float(val: Any, digits: int = 2) -> float | None:
     try:
@@ -35,18 +18,10 @@ def _safe_float(val: Any, digits: int = 2) -> float | None:
         return None
 
 
-# ── Alpha Vantage (search only) ───────────────────────────────────────────
-
-
-class AlphaVantageClient:
-    """Kept only as a namespace; search now uses Yahoo Finance directly."""
-
-    TTL_SEARCH = 3600  # 1 h
-    _SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search"
-    _HEADERS = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
-    }
+class SymbolSearch:
+    TTL = 3600
+    _URL = "https://query1.finance.yahoo.com/v1/finance/search"
+    _HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
     def search(self, keywords: str) -> dict:
         key = f"yf:search:{keywords.lower()}"
@@ -56,7 +31,7 @@ class AlphaVantageClient:
 
         try:
             resp = requests.get(
-                self._SEARCH_URL,
+                self._URL,
                 params={"q": keywords, "quotesCount": 10, "newsCount": 0, "listsCount": 0},
                 headers=self._HEADERS,
                 timeout=10,
@@ -66,50 +41,43 @@ class AlphaVantageClient:
         except Exception:
             return {"bestMatches": []}
 
-        quotes = raw.get("quotes") or []
+        region_map = {
+            "NMS": "United States", "NYQ": "United States", "NGM": "United States",
+            "PCX": "United States", "BTS": "United States", "LSE": "United Kingdom",
+            "TSX": "Canada", "FRA": "Germany", "PAR": "France", "TYO": "Japan",
+        }
+
         matches = []
-        for q in quotes:
+        for q in (raw.get("quotes") or []):
             sym = q.get("symbol", "")
             name = q.get("longname") or q.get("shortname") or sym
             exchange = q.get("exchange", "")
-            # Map exchange codes to regions
-            region_map = {
-                "NMS": "United States", "NYQ": "United States", "NGM": "United States",
-                "PCX": "United States", "BTS": "United States", "LSE": "United Kingdom",
-                "TSX": "Canada", "FRA": "Germany", "PAR": "France", "TYO": "Japan",
-            }
-            region = region_map.get(exchange, exchange)
-            currency = q.get("currency", "USD")
             matches.append({
                 "1. symbol": sym,
                 "2. name": name,
                 "3. type": q.get("quoteType", "Equity"),
-                "4. region": region,
+                "4. region": region_map.get(exchange, exchange),
                 "5. marketOpen": "09:30",
                 "6. marketClose": "16:00",
                 "7. timezone": "UTC-04",
-                "8. currency": currency,
+                "8. currency": q.get("currency", "USD"),
                 "9. matchScore": "1.0000",
             })
 
         result = {"bestMatches": matches}
         if matches:
-            cache.set(key, result, self.TTL_SEARCH)
+            cache.set(key, result, self.TTL)
         return result
 
 
-# ── yfinance client ───────────────────────────────────────────────────────
-
-
 class YFinanceClient:
-    TTL_QUOTE = 120          # 2 min
-    TTL_TIME_SERIES = 1800   # 30 min
-    TTL_OVERVIEW = 86400     # 24 h
-    TTL_NEWS = 900           # 15 min
-    TTL_TOP_MOVERS = 600     # 10 min
-    TTL_MARKET_STATUS = 60   # 1 min
+    TTL_QUOTE = 120
+    TTL_TIME_SERIES = 1800
+    TTL_OVERVIEW = 86400
+    TTL_NEWS = 900
+    TTL_TOP_MOVERS = 600
+    TTL_MARKET_STATUS = 60
 
-    # Curated tickers for top-movers scan (S&P 500 large-caps)
     SCAN_TICKERS = [
         "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B",
         "JPM", "V", "UNH", "JNJ", "XOM", "PG", "MA", "HD", "CVX", "MRK",
@@ -118,8 +86,6 @@ class YFinanceClient:
         "INTC", "QCOM", "IBM", "CRM", "ORCL", "NFLX", "DIS", "PYPL",
         "SPY", "QQQ", "DIA", "IWM", "GLD", "SLV", "VIX",
     ]
-
-    # ── Quote ─────────────────────────────────────────────────────────────
 
     def global_quote(self, symbol: str) -> dict:
         key = f"yf:quote:{symbol.upper()}"
@@ -130,7 +96,7 @@ class YFinanceClient:
         try:
             ticker = yf.Ticker(symbol)
             hist = ticker.history(period="5d", auto_adjust=True)
-            info = ticker.fast_info  # lightweight, no heavy scrape
+            info = ticker.fast_info
 
             if hist.empty:
                 return {"Global Quote": {}}
@@ -147,7 +113,6 @@ class YFinanceClient:
             low = _safe_float(latest["Low"], 4)
             open_ = _safe_float(latest["Open"], 4)
 
-            # 52-week range from fast_info (may be None for some tickers)
             try:
                 week52_high = _safe_float(info.year_high, 4)
                 week52_low = _safe_float(info.year_low, 4)
@@ -175,8 +140,6 @@ class YFinanceClient:
 
         except Exception as exc:
             return {"Global Quote": {}, "error": str(exc)}
-
-    # ── Time series ───────────────────────────────────────────────────────
 
     def time_series_daily(self, symbol: str, period: str = "1y") -> dict:
         key = f"yf:ts:{symbol.upper()}:{period}"
@@ -208,8 +171,6 @@ class YFinanceClient:
 
         except Exception as exc:
             return {"Time Series (Daily)": {}, "error": str(exc)}
-
-    # ── Company overview ──────────────────────────────────────────────────
 
     def company_overview(self, symbol: str) -> dict:
         key = f"yf:overview:{symbol.upper()}"
@@ -269,8 +230,6 @@ class YFinanceClient:
         except Exception as exc:
             return {"Symbol": symbol.upper(), "error": str(exc)}
 
-    # ── News ──────────────────────────────────────────────────────────────
-
     def news_sentiment(self, tickers: str = "", limit: int = 20) -> dict:
         key = f"yf:news:{tickers.lower()}:{limit}"
         cached = cache.get(key)
@@ -290,8 +249,8 @@ class YFinanceClient:
 
             title = content.get("title") or item.get("title", "")
             summary = content.get("summary") or content.get("description") or item.get("summary", "")
+
             url = ""
-            # clickThroughUrl → canonicalUrl → direct url
             ctu = content.get("clickThroughUrl") or {}
             if isinstance(ctu, dict):
                 url = ctu.get("url", "")
@@ -302,7 +261,6 @@ class YFinanceClient:
             if not url:
                 url = item.get("link") or content.get("url", "")
 
-            # Thumbnail
             thumbnail = ""
             thumb_obj = content.get("thumbnail") or item.get("thumbnail") or {}
             if isinstance(thumb_obj, dict):
@@ -310,30 +268,24 @@ class YFinanceClient:
                 if resolutions:
                     thumbnail = resolutions[0].get("url", "")
 
-            # Publisher
             provider = content.get("provider") or {}
             source = provider.get("displayName") if isinstance(provider, dict) else ""
             if not source:
                 source = item.get("publisher") or item.get("source", "")
 
-            # Publish time → ISO string
             pub_time = content.get("pubDate") or content.get("displayTime") or ""
             if not pub_time:
                 ts = item.get("providerPublishTime") or 0
                 if ts:
                     pub_time = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).isoformat()
 
-            # Naive sentiment from title keywords
             title_lower = title.lower()
             if any(w in title_lower for w in ["surge", "soar", "rally", "beat", "record", "gain", "rise", "bull"]):
-                sentiment_label = "Bullish"
-                sentiment_score = 0.7
+                sentiment_label, sentiment_score = "Bullish", 0.7
             elif any(w in title_lower for w in ["fall", "drop", "crash", "loss", "miss", "decline", "bear", "cut"]):
-                sentiment_label = "Bearish"
-                sentiment_score = -0.5
+                sentiment_label, sentiment_score = "Bearish", -0.5
             else:
-                sentiment_label = "Neutral"
-                sentiment_score = 0.1
+                sentiment_label, sentiment_score = "Neutral", 0.1
 
             articles.append({
                 "title": title,
@@ -352,8 +304,6 @@ class YFinanceClient:
             cache.set(key, result, self.TTL_NEWS)
         return result
 
-    # ── Top movers ────────────────────────────────────────────────────────
-
     def top_gainers_losers(self) -> dict:
         key = "yf:top_movers"
         cached = cache.get(key)
@@ -361,14 +311,8 @@ class YFinanceClient:
             return cached
 
         try:
-            tickers = [t for t in self.SCAN_TICKERS if t not in ("VIX",)]
-            data = yf.download(
-                tickers,
-                period="2d",
-                auto_adjust=True,
-                progress=False,
-                threads=True,
-            )
+            tickers = [t for t in self.SCAN_TICKERS if t != "VIX"]
+            data = yf.download(tickers, period="2d", auto_adjust=True, progress=False, threads=True)
             close = data["Close"]
             if close.shape[0] < 2:
                 return {"top_gainers": [], "top_losers": [], "most_actively_traded": []}
@@ -422,8 +366,6 @@ class YFinanceClient:
         except Exception as exc:
             return {"top_gainers": [], "top_losers": [], "most_actively_traded": [], "error": str(exc)}
 
-    # ── Market status (no network call) ──────────────────────────────────
-
     def market_status(self) -> dict:
         key = "yf:market_status"
         cached = cache.get(key)
@@ -432,30 +374,25 @@ class YFinanceClient:
 
         et = zoneinfo.ZoneInfo("America/New_York")
         now = datetime.datetime.now(tz=et)
-        weekday = now.weekday()  # Mon=0 … Sun=6
+        weekday = now.weekday()
         h, m = now.hour, now.minute
         minutes = h * 60 + m
 
-        market_open = 9 * 60 + 30   # 09:30 ET
-        market_close = 16 * 60      # 16:00 ET
-        pre_open = 4 * 60           # 04:00 ET
-        after_close = 20 * 60       # 20:00 ET
+        market_open = 9 * 60 + 30
+        market_close = 16 * 60
+        pre_open = 4 * 60
+        after_close = 20 * 60
 
         if weekday >= 5:
-            status = "Closed"
-            note = "Weekend"
+            status, note = "Closed", "Weekend"
         elif market_open <= minutes < market_close:
-            status = "Open"
-            note = "US markets open"
+            status, note = "Open", "US markets open"
         elif pre_open <= minutes < market_open:
-            status = "Pre-Market"
-            note = "Pre-market session"
+            status, note = "Pre-Market", "Pre-market session"
         elif market_close <= minutes < after_close:
-            status = "After-Hours"
-            note = "After-hours session"
+            status, note = "After-Hours", "After-hours session"
         else:
-            status = "Closed"
-            note = "Outside trading hours"
+            status, note = "Closed", "Outside trading hours"
 
         result = {
             "markets": [
